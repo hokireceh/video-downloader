@@ -121,6 +121,12 @@ function addToHistory(url, userId, filename) {
 // Tambah record search result ke history
 function addToSearchHistory(userId, searchData) {
   try {
+    // Skip jika links kosong - tidak perlu disimpan
+    if (!searchData.links || searchData.links.length === 0) {
+      console.log(`[HISTORY] Skipped saving empty search results for user ${userId}`);
+      return;
+    }
+
     const history = loadHistory();
 
     // Update existing search or add new one
@@ -143,7 +149,7 @@ function addToSearchHistory(userId, searchData) {
     // Auto-cleanup searches immediately after adding/updating
     cleanupOldHistory();
     saveHistory(history);
-    console.log(`[HISTORY] Saved search results for user ${userId}`);
+    console.log(`[HISTORY] Saved search results for user ${userId} (${searchData.links.length} links)`);
   } catch (error) {
     console.error(`[ERROR] Failed to add to search history: ${error.message}`);
   }
@@ -235,7 +241,8 @@ const userPagination = new Map();
 const history = loadHistory();
 history.searches.forEach(search => {
   const now = Date.now();
-  if ((now - search.timestamp) < SEARCH_RETENTION_MS) {
+  // Skip jika expired ATAU links kosong
+  if ((now - search.timestamp) < SEARCH_RETENTION_MS && search.links && search.links.length > 0) {
     userSearchResults.set(search.userId, {
       links: search.links,
       nextPageUrl: search.nextPageUrl,
