@@ -254,7 +254,11 @@ const CONFIG = {
 
   // Timeouts
   HTTP_REQUEST_TIMEOUT: 30000,
-  DOWNLOAD_TIMEOUT: 60000,
+  // Download timeout: Local API needs longer timeout for large files (up to 2GB)
+  // Cloud API: 60s is enough for max 50MB files
+  DOWNLOAD_TIMEOUT: process.env.USE_LOCAL_API === 'true' 
+    ? 600000  // 10 minutes for Local API (large files)
+    : 60000,  // 1 minute for Cloud API (small files)
   SCRAPE_TIMEOUT: 30000,
 
   // Download Progress
@@ -976,9 +980,13 @@ async function downloadVideo(url, chatId) {
       const fileSizeMB = (parseInt(contentLength) / 1024 / 1024).toFixed(2);
       const maxSizeMB = (CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(2);
       console.log(`[WARN] File too large: ${fileSizeMB}MB (max: ${maxSizeMB}MB)`);
+      
+      // Abort the request immediately
+      response.data.destroy();
+      
       return {
         success: false,
-        error: `❌ File terlalu besar!\n\n📦 Ukuran: ${fileSizeMB} MB\n⚠️ Maksimal: ${maxSizeMB} MB\n\n💡 ${useLocalAPI ? 'Local API support hingga 2GB.' : 'Cloud API support hingga 50MB.'}`
+        error: `❌ File terlalu besar!\n\n📦 Ukuran: ${fileSizeMB} MB\n⚠️ Maksimal: ${maxSizeMB} MB\n\n💡 Bot ini menggunakan Telegram ${useLocalAPI ? 'Local API (hingga 2GB)' : 'Cloud API (hingga 50MB)'}.\n\n💭 Untuk file besar, jalankan bot dengan Local API di PC Anda.`
       };
     }
 
@@ -995,10 +1003,23 @@ async function downloadVideo(url, chatId) {
     filePath = path.join(CONFIG.DOWNLOAD_FOLDER, filename);
     const writer = fs.createWriteStream(filePath);
 
-    // Track download progress
+    // Track download progress dengan size check
     let downloaded = 0;
+    let abortedDueToSize = false;
+    
     response.data.on('data', (chunk) => {
       downloaded += chunk.length;
+      
+      // Safety check: abort jika download melebihi limit (untuk server yang tidak kirim Content-Length)
+      if (downloaded > CONFIG.MAX_FILE_SIZE && !abortedDueToSize) {
+        abortedDueToSize = true;
+        const downloadedMB = (downloaded / 1024 / 1024).toFixed(2);
+        const maxSizeMB = (CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(2);
+        console.log(`[WARN] Download exceeded limit during transfer: ${downloadedMB}MB (max: ${maxSizeMB}MB)`);
+        
+        response.data.destroy(new Error('FILE_TOO_LARGE'));
+        writer.destroy(new Error('FILE_TOO_LARGE'));
+      }
     });
 
     response.data.pipe(writer);
@@ -1057,10 +1078,20 @@ async function downloadVideo(url, chatId) {
         if (filePath && fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
         }
-        resolve({
-          success: false,
-          error: `Gagal menyimpan file: ${err.message}`
-        });
+        
+        // Special handling for FILE_TOO_LARGE error
+        if (err.message === 'FILE_TOO_LARGE') {
+          const maxSizeMB = (CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(2);
+          resolve({
+            success: false,
+            error: `❌ File terlalu besar!\n\n⚠️ Maksimal: ${maxSizeMB} MB\n\n💡 Bot ini menggunakan Telegram ${useLocalAPI ? 'Local API (hingga 2GB)' : 'Cloud API (hingga 50MB)'}.\n\n💭 Untuk file besar, jalankan bot dengan Local API di PC Anda.`
+          });
+        } else {
+          resolve({
+            success: false,
+            error: `Gagal menyimpan file: ${err.message}`
+          });
+        }
       });
     });
   } catch (error) {
@@ -1078,10 +1109,16 @@ async function downloadVideo(url, chatId) {
     let errorMessage = error.message;
     if (error.code === 'ECONNREFUSED') {
       errorMessage = 'Koneksi ditolak. Server tidak dapat diakses.';
-    } else if (error.code === 'ETIMEDOUT') {
-      errorMessage = 'Timeout. Server terlalu lama merespons.';
+    } else if (error.code === 'ETIMEDOUT' || error.code === 'ESOCKETTIMEDOUT') {
+      if (useLocalAPI) {
+        errorMessage = `Timeout saat download.\n\n💡 Untuk file besar, coba:\n• Cek koneksi internet Anda\n• Server mungkin lambat merespons\n• Timeout maksimal: ${CONFIG.DOWNLOAD_TIMEOUT / 1000}s (${CONFIG.DOWNLOAD_TIMEOUT / 60000} menit)`;
+      } else {
+        errorMessage = 'Timeout. Server terlalu lama merespons.';
+      }
     } else if (error.code === 'ENOTFOUND') {
       errorMessage = 'Domain tidak ditemukan. Periksa URL Anda.';
+    } else if (error.code === 'ECONNRESET') {
+      errorMessage = 'Koneksi terputus. Server memutuskan koneksi.';
     }
 
     return {
@@ -1329,17 +1366,35 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
     // Kirim video ke user sebagai document dengan content-type yang tepat
-    await bot.sendDocument(chatId, result.filePath, {
-      caption: caption
-    }, {
-      contentType: contentType
-    });
+    try {
+      await bot.sendDocument(chatId, result.filePath, {
+        caption: caption
+      }, {
+        contentType: contentType
+      });
 
-    // Simpan ke history untuk mencegah duplikasi
-    addToHistory(text, userId, result.filename);
+      // Simpan ke history untuk mencegah duplikasi
+      addToHistory(text, userId, result.filename);
 
-    // Hapus pesan loading
-    await bot.deleteMessage(chatId, loadingMsg.message_id);
+      // Hapus pesan loading
+      await bot.deleteMessage(chatId, loadingMsg.message_id);
+    } catch (uploadError) {
+      console.error(`[ERROR] Telegram upload failed: ${uploadError.message}`);
+      
+      // Cleanup file immediately on upload failure
+      if (fs.existsSync(result.filePath)) {
+        fs.unlinkSync(result.filePath);
+      }
+      
+      // Show error to user
+      await bot.editMessageText(
+        `❌ Gagal upload ke Telegram!\n\n` +
+        `Error: ${uploadError.message}\n\n` +
+        `💡 File mungkin terlalu besar untuk Telegram ${useLocalAPI ? 'Local API' : 'Cloud API'} (max ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB).`,
+        { chat_id: chatId, message_id: loadingMsg.message_id }
+      );
+      return;
+    }
 
     // Auto-cleanup: Hapus file setelah dikirim
     setTimeout(() => {
