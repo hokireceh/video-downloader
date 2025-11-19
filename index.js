@@ -946,9 +946,12 @@ async function downloadVideo(url, chatId) {
 
     // Cek ukuran file sebelum download
     if (contentLength && parseInt(contentLength) > CONFIG.MAX_FILE_SIZE) {
+      const fileSizeMB = (parseInt(contentLength) / 1024 / 1024).toFixed(2);
+      const maxSizeMB = (CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(2);
+      console.log(`[WARN] File too large: ${fileSizeMB}MB (max: ${maxSizeMB}MB)`);
       return {
         success: false,
-        error: `File terlalu besar! (${(parseInt(contentLength) / 1024 / 1024).toFixed(2)}MB). Max: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(2)}MB`
+        error: `❌ File terlalu besar!\n\n📦 Ukuran: ${fileSizeMB} MB\n⚠️ Maksimal: ${maxSizeMB} MB\n\n💡 Bot Telegram hanya support file maksimal 50MB.`
       };
     }
 
