@@ -71,10 +71,10 @@ function cleanupOldHistory() {
     const removedSearches = searchesBefore - history.searches.length;
 
     if (removedDownloads > 0) {
-      console.log(`[CLEANUP] Removed ${removedDownloads} old download history entries (>30 days)`);
+      console.log(`[CLEANUP] Removed ${removedDownloads} old download history entries (>24 hours)`);
     }
     if (removedSearches > 0) {
-      console.log(`[CLEANUP] Removed ${removedSearches} old search result entries (>30 min)`);
+      console.log(`[CLEANUP] Removed ${removedSearches} old search result entries (>24 hours)`);
     }
 
     if (removedDownloads > 0 || removedSearches > 0) {
@@ -246,7 +246,7 @@ history.searches.forEach(search => {
   }
 });
 console.log(`[STARTUP] Loaded ${userSearchResults.size} active search results from JSON`);
-console.log('[STARTUP] History cleanup completed`);
+console.log('[STARTUP] History cleanup completed');
 
 // ==================== UTILITY FUNCTIONS ====================
 // Fungsi untuk cek rate limit
