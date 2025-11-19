@@ -1,12 +1,6 @@
 [nix]
-channel = "stable-25_05"
+channel = "stable-24_05"
 packages = [
   "nano",
-  "speedtest-cli",
-  "cmake",
-  "gcc",
-  "gnumake",
-  "openssl",
-  "zlib",
-  "git"
+  "speedtest-cli"
 ]
