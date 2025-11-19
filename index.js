@@ -1455,38 +1455,79 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
     // Kirim video ke user sebagai document dengan content-type yang tepat
-    try {
-      // Both Local API and Cloud API need streams, not file paths
-      // Local API handles large files (up to 2GB) internally
-      const fileStream = fs.createReadStream(result.filePath);
-      await bot.sendDocument(chatId, fileStream, {
-        caption: caption
-      }, {
-        filename: result.filename,
-        contentType: contentType
-      });
+    let uploadSuccess = false;
+    let uploadAttempts = 0;
+    const maxUploadRetries = 2;
+    
+    while (!uploadSuccess && uploadAttempts < maxUploadRetries) {
+      try {
+        uploadAttempts++;
+        
+        if (uploadAttempts > 1) {
+          console.log(`[RETRY] Upload attempt ${uploadAttempts}/${maxUploadRetries}`);
+          await bot.editMessageText(
+            `⏫ Retry upload (${uploadAttempts}/${maxUploadRetries})...`,
+            { chat_id: chatId, message_id: loadingMsg.message_id }
+          ).catch(() => {});
+        }
+        
+        // Both Local API and Cloud API need streams, not file paths
+        // Local API handles large files (up to 2GB) internally
+        const fileStream = fs.createReadStream(result.filePath);
+        await bot.sendDocument(chatId, fileStream, {
+          caption: caption
+        }, {
+          filename: result.filename,
+          contentType: contentType
+        });
 
-      // Simpan ke history untuk mencegah duplikasi
-      addToHistory(text, userId, result.filename);
+        uploadSuccess = true;
+        
+        // Simpan ke history untuk mencegah duplikasi
+        addToHistory(text, userId, result.filename);
 
-      // Hapus pesan loading
-      await bot.deleteMessage(chatId, loadingMsg.message_id);
-    } catch (uploadError) {
-      console.error(`[ERROR] Telegram upload failed: ${uploadError.message}`);
-      
-      // Cleanup file immediately on upload failure
-      if (fs.existsSync(result.filePath)) {
-        fs.unlinkSync(result.filePath);
+        // Hapus pesan loading
+        await bot.deleteMessage(chatId, loadingMsg.message_id);
+        
+      } catch (uploadError) {
+        console.error(`[ERROR] Telegram upload failed (attempt ${uploadAttempts}): ${uploadError.message}`);
+        
+        // Jika ini retry terakhir atau error yang tidak bisa di-retry
+        if (uploadAttempts >= maxUploadRetries || 
+            uploadError.message.includes('file is too big') || 
+            uploadError.message.includes('wrong file identifier') ||
+            uploadError.message.includes('Bad Request')) {
+          
+          // Cleanup file immediately on upload failure
+          if (fs.existsSync(result.filePath)) {
+            fs.unlinkSync(result.filePath);
+          }
+          
+          // Parse error message untuk memberikan feedback yang lebih baik
+          let errorDetails = uploadError.message;
+          let helpText = '';
+          
+          if (uploadError.message.includes('file is too big')) {
+            helpText = `\n\n💡 File terlalu besar untuk Telegram ${useLocalAPI ? 'Local API' : 'Cloud API'}.\n⚠️ Max: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`;
+          } else if (uploadError.message.includes('ETELEGRAM')) {
+            errorDetails = uploadError.message.replace('ETELEGRAM: ', '');
+            helpText = '\n\n💡 Error dari Telegram server. Coba lagi nanti.';
+          } else if (uploadError.message.includes('ECONNRESET') || uploadError.message.includes('ETIMEDOUT')) {
+            helpText = '\n\n💡 Koneksi terputus. Periksa koneksi internet Anda.';
+          }
+          
+          // Show error to user
+          await bot.editMessageText(
+            `❌ Gagal upload ke Telegram!\n\n` +
+            `Error: ${errorDetails}${helpText}`,
+            { chat_id: chatId, message_id: loadingMsg.message_id }
+          );
+          return;
+        }
+        
+        // Wait before retry (exponential backoff: 2s, 4s)
+        await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
       }
-      
-      // Show error to user
-      await bot.editMessageText(
-        `❌ Gagal upload ke Telegram!\n\n` +
-        `Error: ${uploadError.message}\n\n` +
-        `💡 File mungkin terlalu besar untuk Telegram ${useLocalAPI ? 'Local API' : 'Cloud API'} (max ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB).`,
-        { chat_id: chatId, message_id: loadingMsg.message_id }
-      );
-      return;
     }
 
     // Auto-cleanup: Hapus file setelah dikirim
@@ -2002,14 +2043,32 @@ bot.on('callback_query', async (query) => {
       };
       const contentType = mimeTypes[ext] || 'video/mp4';
 
-      // Send document - both APIs need streams
-      const fileStream = fs.createReadStream(result.filePath);
-      await bot.sendDocument(chatId, fileStream, {
-        caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
-      }, {
-        filename: result.filename,
-        contentType: contentType
-      });
+      // Send document - both APIs need streams with retry logic
+      let uploadSuccess = false;
+      let uploadAttempts = 0;
+      const maxRetries = 2;
+      
+      while (!uploadSuccess && uploadAttempts < maxRetries) {
+        try {
+          uploadAttempts++;
+          
+          const fileStream = fs.createReadStream(result.filePath);
+          await bot.sendDocument(chatId, fileStream, {
+            caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
+          }, {
+            filename: result.filename,
+            contentType: contentType
+          });
+          
+          uploadSuccess = true;
+        } catch (retryError) {
+          console.error(`[ERROR] Upload retry ${uploadAttempts}/${maxRetries}: ${retryError.message}`);
+          if (uploadAttempts >= maxRetries) {
+            throw retryError;
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
+        }
+      }
 
       // Simpan ke history
       addToHistory(link, userId, result.filename);
