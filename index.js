@@ -1003,12 +1003,39 @@ async function downloadVideo(url, chatId) {
     filePath = path.join(CONFIG.DOWNLOAD_FOLDER, filename);
     const writer = fs.createWriteStream(filePath);
 
-    // Track download progress dengan size check
+    // Track download progress dengan size check dan periodic logging
     let downloaded = 0;
     let abortedDueToSize = false;
+    let lastLoggedPercent = 0;
+    const totalSize = parseInt(contentLength) || 0;
+    const startTime = Date.now();
+    
+    console.log(`[DOWNLOAD] Starting download: ${filename} (${(totalSize / 1024 / 1024).toFixed(2)}MB)`);
     
     response.data.on('data', (chunk) => {
       downloaded += chunk.length;
+      
+      // Progress logging: log setiap 10% atau setiap 50MB
+      if (totalSize > 0) {
+        const percent = Math.floor((downloaded / totalSize) * 100);
+        if (percent >= lastLoggedPercent + 10 || (downloaded - (lastLoggedPercent * totalSize / 100)) >= 50 * 1024 * 1024) {
+          lastLoggedPercent = percent;
+          const downloadedMB = (downloaded / 1024 / 1024).toFixed(2);
+          const totalMB = (totalSize / 1024 / 1024).toFixed(2);
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          const speed = (downloaded / 1024 / (Date.now() - startTime)).toFixed(2);
+          console.log(`[PROGRESS] ${percent}% - ${downloadedMB}/${totalMB}MB - ${speed}MB/s - ${elapsed}s elapsed`);
+        }
+      } else {
+        // Jika tidak ada Content-Length, log setiap 50MB
+        const downloadedMB = Math.floor(downloaded / (50 * 1024 * 1024));
+        if (downloadedMB > lastLoggedPercent) {
+          lastLoggedPercent = downloadedMB;
+          const mb = (downloaded / 1024 / 1024).toFixed(2);
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          console.log(`[PROGRESS] Downloaded: ${mb}MB - ${elapsed}s elapsed`);
+        }
+      }
       
       // Safety check: abort jika download melebihi limit (untuk server yang tidak kirim Content-Length)
       if (downloaded > CONFIG.MAX_FILE_SIZE && !abortedDueToSize) {
