@@ -1456,21 +1456,15 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
 
     // Kirim video ke user sebagai document dengan content-type yang tepat
     try {
-      // For Local API, send file path directly (it handles large files internally)
-      // For Cloud API, use stream
-      if (useLocalAPI) {
-        await bot.sendDocument(chatId, result.filePath, {
-          caption: caption
-        });
-      } else {
-        const fileStream = fs.createReadStream(result.filePath);
-        await bot.sendDocument(chatId, fileStream, {
-          caption: caption
-        }, {
-          filename: result.filename,
-          contentType: contentType
-        });
-      }
+      // Both Local API and Cloud API need streams, not file paths
+      // Local API handles large files (up to 2GB) internally
+      const fileStream = fs.createReadStream(result.filePath);
+      await bot.sendDocument(chatId, fileStream, {
+        caption: caption
+      }, {
+        filename: result.filename,
+        contentType: contentType
+      });
 
       // Simpan ke history untuk mencegah duplikasi
       addToHistory(text, userId, result.filename);
@@ -2008,20 +2002,14 @@ bot.on('callback_query', async (query) => {
       };
       const contentType = mimeTypes[ext] || 'video/mp4';
 
-      // Send document
-      if (useLocalAPI) {
-        await bot.sendDocument(chatId, result.filePath, {
-          caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
-        });
-      } else {
-        const fileStream = fs.createReadStream(result.filePath);
-        await bot.sendDocument(chatId, fileStream, {
-          caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
-        }, {
-          filename: result.filename,
-          contentType: contentType
-        });
-      }
+      // Send document - both APIs need streams
+      const fileStream = fs.createReadStream(result.filePath);
+      await bot.sendDocument(chatId, fileStream, {
+        caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
+      }, {
+        filename: result.filename,
+        contentType: contentType
+      });
 
       // Simpan ke history
       addToHistory(link, userId, result.filename);
