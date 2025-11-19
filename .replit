@@ -23,6 +23,23 @@ outputType = "console"
 task = "shell.exec"
 args = "npm start"
 
+[[workflows.workflow]]
+name = "Bot with Local API (Experimental)"
+author = 49906323
+mode = "parallel"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "./start-local-api.sh &"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "sleep 5"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm start"
+
 [agent]
 expertMode = true
 

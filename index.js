@@ -240,7 +240,10 @@ const CONFIG = {
   MAX_REQUESTS_PER_WINDOW: 5,
 
   // File Management
-  MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE) || 50000000,
+  // Local API supports up to 2GB, Cloud API supports up to 50MB
+  MAX_FILE_SIZE: process.env.USE_LOCAL_API === 'true' 
+    ? 2000000000  // 2GB for Local API
+    : (parseInt(process.env.MAX_FILE_SIZE) || 50000000), // 50MB for Cloud API
   DOWNLOAD_FOLDER: process.env.DOWNLOAD_FOLDER || './downloads',
   FILE_CLEANUP_AGE: 3600000,
   FILE_CLEANUP_INTERVAL: 1800000,
@@ -289,8 +292,23 @@ function validateEnvironment() {
 
 validateEnvironment();
 
-// Inisialisasi bot
-const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
+// Inisialisasi bot dengan support Local API (optional)
+const botOptions = { polling: true };
+
+// Check if Local API is enabled
+const useLocalAPI = process.env.USE_LOCAL_API === 'true';
+const localAPIUrl = process.env.LOCAL_API_URL || 'http://0.0.0.0:8081';
+
+if (useLocalAPI) {
+  botOptions.baseApiUrl = localAPIUrl;
+  console.log(`[INFO] Using Local Bot API: ${localAPIUrl}`);
+  console.log('[INFO] File size limit: Up to 2GB (Local API)');
+} else {
+  console.log('[INFO] Using Telegram Cloud Bot API');
+  console.log('[INFO] File size limit: Up to 50MB (Cloud API)');
+}
+
+const bot = new TelegramBot(process.env.BOT_TOKEN, botOptions);
 
 // Pastikan folder download ada
 if (!fs.existsSync(CONFIG.DOWNLOAD_FOLDER)) {

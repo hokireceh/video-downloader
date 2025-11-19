@@ -71,6 +71,11 @@ Bot Telegram canggih untuk mendownload video dari berbagai sumber dengan fitur s
 - npm atau yarn
 - Telegram Bot Token (dari [@BotFather](https://t.me/botfather))
 
+### Optional: Telegram Local Bot API
+Jika ingin support file >50MB (hingga 2GB):
+- Telegram API ID & Hash (dari [my.telegram.org/apps](https://my.telegram.org/apps))
+- Compile dependencies (sudah include di Nix config)
+
 ## 🚀 Quick Start
 
 ### 1. Clone Repository
@@ -110,9 +115,26 @@ MAX_FILE_SIZE=50000000
 
 ### 5. Run Bot
 
+**Opsi A: Cloud Bot API (Default - Max 50MB)**
 ```bash
 npm start
 ```
+
+**Opsi B: Local Bot API (Experimental - Max 2GB)**
+
+1. Set environment variables di `.env`:
+```env
+USE_LOCAL_API=true
+TELEGRAM_API_ID=your_api_id_from_my_telegram_org
+TELEGRAM_API_HASH=your_api_hash_from_my_telegram_org
+```
+
+2. Jalankan setup (hanya sekali):
+```bash
+./setup-local-api.sh
+```
+
+3. Gunakan workflow "Bot with Local API (Experimental)" dari dropdown Run button
 
 Bot akan mulai berjalan dan siap menerima perintah!
 

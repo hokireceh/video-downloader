@@ -1,0 +1,33 @@
+
+#!/bin/bash
+
+# Configuration
+API_ID="${TELEGRAM_API_ID}"
+API_HASH="${TELEGRAM_API_HASH}"
+LOCAL_API_PORT=8081
+LOG_FILE="./data/telegram-bot-api.log"
+
+# Validate env vars
+if [ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
+  echo "❌ Error: TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env"
+  echo "💡 Get them from: https://my.telegram.org/apps"
+  exit 1
+fi
+
+# Check if binary exists
+if [ ! -f "./telegram-bot-api/bin/telegram-bot-api" ]; then
+  echo "⚠️ Telegram Bot API Server not found. Running setup..."
+  ./setup-local-api.sh
+fi
+
+# Start Local API Server
+echo "🚀 Starting Telegram Local Bot API Server on port $LOCAL_API_PORT..."
+echo "📝 Logs: $LOG_FILE"
+
+./telegram-bot-api/bin/telegram-bot-api \
+  --api-id="$API_ID" \
+  --api-hash="$API_HASH" \
+  --local \
+  --http-port=$LOCAL_API_PORT \
+  --log="$LOG_FILE" \
+  --verbosity=1
