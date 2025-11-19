@@ -1456,14 +1456,21 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
 
     // Kirim video ke user sebagai document dengan content-type yang tepat
     try {
-      // Use file stream for Local API compatibility
-      const fileStream = fs.createReadStream(result.filePath);
-      await bot.sendDocument(chatId, fileStream, {
-        caption: caption
-      }, {
-        filename: result.filename,
-        contentType: contentType
-      });
+      // For Local API, send file path directly (it handles large files internally)
+      // For Cloud API, use stream
+      if (useLocalAPI) {
+        await bot.sendDocument(chatId, result.filePath, {
+          caption: caption
+        });
+      } else {
+        const fileStream = fs.createReadStream(result.filePath);
+        await bot.sendDocument(chatId, fileStream, {
+          caption: caption
+        }, {
+          filename: result.filename,
+          contentType: contentType
+        });
+      }
 
       // Simpan ke history untuk mencegah duplikasi
       addToHistory(text, userId, result.filename);
@@ -1830,14 +1837,20 @@ bot.on('callback_query', async (query) => {
             `          ❖ ${fileSizeMB}MB ❖\n` +
             `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-          // Kirim video (use stream for Local API)
-          const fileStream = fs.createReadStream(result.filePath);
-          await bot.sendDocument(chatId, fileStream, {
-            caption: caption
-          }, {
-            filename: result.filename,
-            contentType: 'video/mp4'
-          });
+          // Kirim video
+          if (useLocalAPI) {
+            await bot.sendDocument(chatId, result.filePath, {
+              caption: caption
+            });
+          } else {
+            const fileStream = fs.createReadStream(result.filePath);
+            await bot.sendDocument(chatId, fileStream, {
+              caption: caption
+            }, {
+              filename: result.filename,
+              contentType: 'video/mp4'
+            });
+          }
 
           // Simpan ke history
           addToHistory(link, userId, result.filename);
@@ -1995,14 +2008,20 @@ bot.on('callback_query', async (query) => {
       };
       const contentType = mimeTypes[ext] || 'video/mp4';
 
-      // Use stream for Local API
-      const fileStream = fs.createReadStream(result.filePath);
-      await bot.sendDocument(chatId, fileStream, {
-        caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
-      }, {
-        filename: result.filename,
-        contentType: contentType
-      });
+      // Send document
+      if (useLocalAPI) {
+        await bot.sendDocument(chatId, result.filePath, {
+          caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
+        });
+      } else {
+        const fileStream = fs.createReadStream(result.filePath);
+        await bot.sendDocument(chatId, fileStream, {
+          caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
+        }, {
+          filename: result.filename,
+          contentType: contentType
+        });
+      }
 
       // Simpan ke history
       addToHistory(link, userId, result.filename);
