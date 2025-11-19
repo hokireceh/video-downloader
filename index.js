@@ -1197,7 +1197,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
 
     const caption = 
       `▬▬▬▬▬▬▬▬▬▬▬▬\n` +
-      `❖ ${filenameCleaned} ❖\n\n` +
+      `${filenameCleaned} \n\n` +
       `          ❖ ${fileSizeMB}MB ❖\n` +
       `▬▬▬▬▬▬▬▬▬▬▬▬`;
 
@@ -1554,8 +1554,8 @@ bot.on('callback_query', async (query) => {
           const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
 
           const caption = 
-            `▬▬▬▬ ${i + 1}/${links.length} ▬▬▬▬\n` +
-            `❖ ${filenameCleaned} ❖\n\n` +
+            `▬▬▬▬▬▬ ${i + 1}/${links.length} ▬▬▬▬▬▬\n` +
+            ` ${filenameCleaned} \n\n` +
             `          ❖ ${fileSizeMB}MB ❖\n` +
             `▬▬▬▬▬▬▬▬▬▬▬▬`;
 
