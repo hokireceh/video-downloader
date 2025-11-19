@@ -964,46 +964,12 @@ bot.onText(/\/stats/, (msg) => {
   );
 });
 
-// Handle URL video
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const text = msg.text;
-  
-  // Skip kalau command
-  if (text?.startsWith('/')) return;
-  
-  // Validasi URL dasar
-  if (!text || !text.match(/^https?:\/\/.+/i)) {
-    return bot.sendMessage(chatId, '❌ Kirim URL yang valid!\n\nContoh: https://example.com/video.mp4');
-  }
-  
-  // Cek rate limit
-  if (!checkRateLimit(userId)) {
-    return bot.sendMessage(
-      chatId, 
-      '⚠️ Terlalu banyak request! Tunggu sebentar ya.\n\n' +
-      `Max ${CONFIG.MAX_REQUESTS_PER_WINDOW} video per ${CONFIG.RATE_LIMIT_WINDOW / 1000} detik.`
-    );
-  }
-  
-  // Validasi URL yang lebih ketat (dengan DNS resolution check)
-  const urlValidation = await isValidVideoUrl(text);
-  if (!urlValidation.valid) {
-    return bot.sendMessage(chatId, `❌ ${urlValidation.error}`);
-  }
-  
-  // Cek duplikasi: apakah URL ini sudah pernah didownload dalam 24 jam terakhir?
-  if (isAlreadyDownloaded(text, userId)) {
-    return bot.sendMessage(
-      chatId,
-      '⚠️ Video ini sudah pernah kamu download dalam 24 jam terakhir!\n\n' +
-      '💡 Tip: History otomatis dibersihkan setiap 24 jam. Jika kamu benar-benar ingin download lagi, tunggu sebentar atau gunakan URL berbeda.'
-    );
-  }
-  
+// Fungsi untuk proses download video (bisa dipanggil ulang)
+async function processVideoDownload(text, chatId, userId, existingMessageId = null, skipDuplicateCheck = false) {
   // Kirim status
-  const loadingMsg = await bot.sendMessage(chatId, '⏳ Processing...');
+  const loadingMsg = existingMessageId 
+    ? { message_id: existingMessageId, chat: { id: chatId } }
+    : await bot.sendMessage(chatId, '⏳ Processing...');
   
   try {
     let videoUrl = text;
@@ -1184,6 +1150,64 @@ bot.on('message', async (msg) => {
       await bot.sendMessage(chatId, `❌ Error: ${error.message}`);
     }
   }
+}
+
+// Handle URL video
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const text = msg.text;
+  
+  // Skip kalau command
+  if (text?.startsWith('/')) return;
+  
+  // Validasi URL dasar
+  if (!text || !text.match(/^https?:\/\/.+/i)) {
+    return bot.sendMessage(chatId, '❌ Kirim URL yang valid!\n\nContoh: https://example.com/video.mp4');
+  }
+  
+  // Cek rate limit
+  if (!checkRateLimit(userId)) {
+    return bot.sendMessage(
+      chatId, 
+      '⚠️ Terlalu banyak request! Tunggu sebentar ya.\n\n' +
+      `Max ${CONFIG.MAX_REQUESTS_PER_WINDOW} video per ${CONFIG.RATE_LIMIT_WINDOW / 1000} detik.`
+    );
+  }
+  
+  // Validasi URL yang lebih ketat (dengan DNS resolution check)
+  const urlValidation = await isValidVideoUrl(text);
+  if (!urlValidation.valid) {
+    return bot.sendMessage(chatId, `❌ ${urlValidation.error}`);
+  }
+  
+  // Cek duplikasi: apakah URL ini sudah pernah didownload dalam 24 jam terakhir?
+  if (isAlreadyDownloaded(text, userId)) {
+    const keyboard = [
+      [
+        { text: '⬇️ Download Ulang', callback_data: `redownload_${Buffer.from(text).toString('base64').substring(0, 50)}` },
+        { text: '❌ Skip', callback_data: 'skip_download' }
+      ]
+    ];
+    
+    // Simpan URL untuk redownload
+    userSearchResults.set(`redownload_${userId}`, {
+      url: text,
+      timestamp: Date.now()
+    });
+    
+    return bot.sendMessage(
+      chatId,
+      '⚠️ Video ini sudah pernah kamu download dalam 24 jam terakhir!\n\n' +
+      '💡 Pilih aksi:\n' +
+      '• Download Ulang - Download video lagi\n' +
+      '• Skip - Batalkan download',
+      { reply_markup: { inline_keyboard: keyboard } }
+    );
+  }
+  
+  // Process download
+  await processVideoDownload(text, chatId, userId);
 });
 
 // Handle callback query (tombol inline keyboard)
@@ -1194,6 +1218,52 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   
   try {
+    // Handle redownload confirmation
+    if (data.startsWith('redownload_')) {
+      await bot.answerCallbackQuery(query.id);
+      
+      const redownloadData = userSearchResults.get(`redownload_${userId}`);
+      
+      if (!redownloadData || !redownloadData.url) {
+        await bot.editMessageText(
+          '❌ Data sudah expired. Kirim URL lagi ya!',
+          { chat_id: chatId, message_id: messageId }
+        );
+        return;
+      }
+      
+      const url = redownloadData.url;
+      
+      // Hapus data redownload
+      userSearchResults.delete(`redownload_${userId}`);
+      
+      await bot.editMessageText(
+        '⏳ Processing ulang...',
+        { chat_id: chatId, message_id: messageId }
+      );
+      
+      // Proses download tanpa cek duplikasi
+      await processVideoDownload(url, chatId, userId, messageId, true);
+      return;
+    }
+    
+    // Handle skip download
+    if (data === 'skip_download') {
+      await bot.answerCallbackQuery(query.id, {
+        text: '✓ Download dibatalkan',
+        show_alert: false
+      });
+      
+      // Hapus data redownload
+      userSearchResults.delete(`redownload_${userId}`);
+      
+      await bot.editMessageText(
+        '✅ Download dibatalkan.\n\n💡 Kirim URL baru jika ingin download video lain.',
+        { chat_id: chatId, message_id: messageId }
+      );
+      return;
+    }
+    
     // Ambil search results user ini
     const searchData = userSearchResults.get(userId);
     
