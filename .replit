@@ -21,7 +21,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm start"
+args = "node index.js"
 
 [agent]
 expertMode = true
