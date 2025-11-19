@@ -111,7 +111,6 @@ function addToHistory(url, userId, filename) {
 
     // Auto-cleanup downloads immediately after adding
     cleanupOldHistory();
-    saveHistory(history);
     console.log(`[HISTORY] Added download: ${filename} for user ${userId}`);
   } catch (error) {
     console.error(`[ERROR] Failed to add to download history: ${error.message}`);
@@ -280,6 +279,16 @@ function validateEnvironment() {
     errors.push('BOT_TOKEN appears to be invalid (too short)');
   }
 
+  // Validate Local API credentials if enabled
+  if (process.env.USE_LOCAL_API === 'true') {
+    if (!process.env.TELEGRAM_API_ID) {
+      errors.push('TELEGRAM_API_ID is required for Local API');
+    }
+    if (!process.env.TELEGRAM_API_HASH) {
+      errors.push('TELEGRAM_API_HASH is required for Local API');
+    }
+  }
+
   if (errors.length > 0) {
     console.error('[FATAL] Environment validation failed:');
     errors.forEach(err => console.error(`  - ${err}`));
@@ -297,7 +306,7 @@ const botOptions = { polling: true };
 
 // Check if Local API is enabled
 const useLocalAPI = process.env.USE_LOCAL_API === 'true';
-const localAPIUrl = process.env.LOCAL_API_URL || 'http://0.0.0.0:8081';
+const localAPIUrl = process.env.LOCAL_API_URL || 'http://localhost:8081';
 
 if (useLocalAPI) {
   botOptions.baseApiUrl = localAPIUrl;
@@ -969,7 +978,7 @@ async function downloadVideo(url, chatId) {
       console.log(`[WARN] File too large: ${fileSizeMB}MB (max: ${maxSizeMB}MB)`);
       return {
         success: false,
-        error: `❌ File terlalu besar!\n\n📦 Ukuran: ${fileSizeMB} MB\n⚠️ Maksimal: ${maxSizeMB} MB\n\n💡 Bot Telegram hanya support file maksimal 50MB.`
+        error: `❌ File terlalu besar!\n\n📦 Ukuran: ${fileSizeMB} MB\n⚠️ Maksimal: ${maxSizeMB} MB\n\n💡 ${useLocalAPI ? 'Local API support hingga 2GB.' : 'Cloud API support hingga 50MB.'}`
       };
     }
 
@@ -1906,6 +1915,7 @@ process.on('uncaughtException', (error) => {
 });
 
 console.log('✅ Bot berjalan...');
+console.log(`🔗 API Mode: ${useLocalAPI ? 'Local API (' + localAPIUrl + ')' : 'Cloud API'}`);
 console.log(`📊 Rate limit: ${CONFIG.MAX_REQUESTS_PER_WINDOW} requests per ${CONFIG.RATE_LIMIT_WINDOW / 1000}s`);
 console.log(`📁 Max file size: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`);
 console.log(`🗂️ Download folder: ${CONFIG.DOWNLOAD_FOLDER}`);
