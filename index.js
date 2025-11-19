@@ -119,39 +119,110 @@ function addToHistory(url, userId, filename) {
 }
 
 // Tambah record search result ke history
+// Note: Function ini sekarang wrapper untuk setUserSearchEntry (backwards compatibility)
 function addToSearchHistory(userId, searchData) {
+  // Delegate ke setUserSearchEntry (JSON-based helper)
+  setUserSearchEntry(userId, searchData);
+}
+
+// ==================== JSON-BASED SEARCH HELPERS ====================
+// Helper function: Get search entry untuk user tertentu dari JSON
+// Auto-cleanup expired entries setiap kali read
+function getUserSearchEntry(userId) {
   try {
-    // Skip jika links kosong - tidak perlu disimpan
-    if (!searchData.links || searchData.links.length === 0) {
-      console.log(`[HISTORY] Skipped saving empty search results for user ${userId}`);
+    const history = loadHistory();
+    const now = Date.now();
+    
+    // Cleanup expired entries before reading
+    history.searches = history.searches.filter(entry => {
+      return (now - entry.timestamp) < SEARCH_RETENTION_MS;
+    });
+    
+    // Save if cleanup happened
+    const originalLength = loadHistory().searches.length;
+    if (history.searches.length < originalLength) {
+      saveHistory(history);
+    }
+    
+    // Find user's search entry
+    const userEntry = history.searches.find(s => s.userId === userId);
+    
+    // Return null jika tidak ada
+    // ATAU jika links kosong DAN tidak ada nextPageUrl (benar-benar empty)
+    if (!userEntry) {
+      return null;
+    }
+    
+    if ((!userEntry.links || userEntry.links.length === 0) && !userEntry.nextPageUrl) {
+      return null;
+    }
+    
+    return userEntry;
+  } catch (error) {
+    console.error(`[ERROR] Failed to get search entry for user ${userId}: ${error.message}`);
+    return null;
+  }
+}
+
+// Helper function: Set/replace search entry untuk user
+function setUserSearchEntry(userId, searchData) {
+  try {
+    // Skip hanya jika links kosong DAN tidak ada nextPageUrl
+    // (Jika ada nextPageUrl, tetap simpan untuk keperluan navigation)
+    if ((!searchData.links || searchData.links.length === 0) && !searchData.nextPageUrl) {
+      console.log(`[SEARCH] Skipped saving empty search results for user ${userId}`);
       return;
     }
-
+    
     const history = loadHistory();
-
-    // Update existing search or add new one
+    
+    // Replace existing entry atau tambah baru
     const existingIndex = history.searches.findIndex(s => s.userId === userId);
-    const newSearchEntry = {
+    const newEntry = {
       userId: userId,
-      links: searchData.links,
+      links: searchData.links || [],
       nextPageUrl: searchData.nextPageUrl,
       originalUrl: searchData.originalUrl,
       currentPage: searchData.currentPage,
       timestamp: Date.now()
     };
-
+    
     if (existingIndex > -1) {
-      history.searches[existingIndex] = newSearchEntry;
+      history.searches[existingIndex] = newEntry;
+      const linkCount = searchData.links ? searchData.links.length : 0;
+      console.log(`[SEARCH] Replaced search results for user ${userId} (${linkCount} links${searchData.nextPageUrl ? ', has next page' : ''})`);
     } else {
-      history.searches.push(newSearchEntry);
+      history.searches.push(newEntry);
+      const linkCount = searchData.links ? searchData.links.length : 0;
+      console.log(`[SEARCH] Added search results for user ${userId} (${linkCount} links${searchData.nextPageUrl ? ', has next page' : ''})`);
     }
-
-    // Auto-cleanup searches immediately after adding/updating
+    
+    // Cleanup expired entries before saving
     cleanupOldHistory();
     saveHistory(history);
-    console.log(`[HISTORY] Saved search results for user ${userId} (${searchData.links.length} links)`);
   } catch (error) {
-    console.error(`[ERROR] Failed to add to search history: ${error.message}`);
+    console.error(`[ERROR] Failed to set search entry for user ${userId}: ${error.message}`);
+  }
+}
+
+// Helper function: Delete search entry untuk user
+function deleteUserSearchEntry(userId) {
+  try {
+    const history = loadHistory();
+    const initialLength = history.searches.length;
+    
+    history.searches = history.searches.filter(s => s.userId !== userId);
+    
+    if (history.searches.length < initialLength) {
+      saveHistory(history);
+      console.log(`[SEARCH] Deleted search results for user ${userId}`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error(`[ERROR] Failed to delete search entry for user ${userId}: ${error.message}`);
+    return false;
   }
 }
 
@@ -231,29 +302,14 @@ if (!fs.existsSync(CONFIG.DOWNLOAD_FOLDER)) {
 // Rate limiting: track user requests
 const userRequests = new Map();
 
-// Search results (simpan links yang ditemukan per user)
-const userSearchResults = new Map();
-
 // Pagination (simpan halaman aktif dan message ID)
 const userPagination = new Map();
 
-// Load search results from JSON into memory (for users with valid, non-expired searches)
-const history = loadHistory();
-history.searches.forEach(search => {
-  const now = Date.now();
-  // Skip jika expired ATAU links kosong
-  if ((now - search.timestamp) < SEARCH_RETENTION_MS && search.links && search.links.length > 0) {
-    userSearchResults.set(search.userId, {
-      links: search.links,
-      nextPageUrl: search.nextPageUrl,
-      originalUrl: search.originalUrl,
-      currentPage: search.currentPage,
-      timestamp: search.timestamp
-    });
-  }
-});
-console.log(`[STARTUP] Loaded ${userSearchResults.size} active search results from JSON`);
-console.log('[STARTUP] History cleanup completed');
+// Redownload confirmation data (temporary, in-memory only)
+const userRedownloadData = new Map();
+
+// Note: Search results sekarang langsung read/write dari JSON, tidak pakai memory
+console.log('[STARTUP] Initialized - Search results will be read from JSON on-demand');
 
 // ==================== UTILITY FUNCTIONS ====================
 // Fungsi untuk cek rate limit
@@ -296,23 +352,17 @@ function cleanupOldFiles() {
 // Jalankan cleanup files secara periodik
 setInterval(cleanupOldFiles, CONFIG.FILE_CLEANUP_INTERVAL);
 
-// Fungsi untuk cleanup memory maps (userSearchResults, userPagination, userRequests)
+// Fungsi untuk cleanup memory maps (userPagination, userRequests)
+// Note: userSearchResults sudah tidak ada, langsung pakai JSON
 function cleanupExpiredMemoryData() {
   try {
     const now = Date.now();
     let cleanedCount = 0;
 
-    // Cleanup userSearchResults
-    for (const [userId, data] of userSearchResults.entries()) {
-      if (now - data.timestamp > CONFIG.SEARCH_RESULTS_TTL) {
-        userSearchResults.delete(userId);
-        cleanedCount++;
-      }
-    }
-
-    // Cleanup userPagination (gunakan search results sebagai patokan)
+    // Cleanup userPagination (cek dari JSON apakah user punya search results)
     for (const userId of userPagination.keys()) {
-      if (!userSearchResults.has(userId)) {
+      const searchEntry = getUserSearchEntry(userId);
+      if (!searchEntry) {
         userPagination.delete(userId);
         cleanedCount++;
       }
@@ -1089,22 +1139,13 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
         return;
       }
 
-      // Simpan links untuk user ini
+      // Simpan links untuk user ini di JSON (menggantikan yang lama)
       const links = linksResult.links.slice(0, CONFIG.MAX_SEARCH_RESULTS);
-      // Save search results to history (JSON file)
-      addToSearchHistory(userId, {
+      setUserSearchEntry(userId, {
         links: links,
         nextPageUrl: linksResult.nextPageUrl,
         originalUrl: text,
         currentPage: 1 // Start from page 1
-      });
-
-      userSearchResults.set(userId, {
-        links: links,
-        timestamp: Date.now(), // Update timestamp for memory cleanup
-        nextPageUrl: linksResult.nextPageUrl,
-        originalUrl: text,
-        currentPage: 1
       });
 
       // Simpan state pagination (halaman 0 = awal)
@@ -1264,11 +1305,11 @@ bot.on('message', async (msg) => {
 
   // Hapus search results lama saat ada URL baru (search retention policy)
   // Search results: dihapus setelah ada URL baru + akan dihapus otomatis setelah >24 jam
-  if (userSearchResults.has(userId)) {
-    const oldSearch = userSearchResults.get(userId);
+  const oldSearch = getUserSearchEntry(userId);
+  if (oldSearch) {
     // Cek apakah ini URL baru (bukan dari search results yang ada)
     if (!oldSearch.links || !oldSearch.links.includes(text)) {
-      userSearchResults.delete(userId);
+      deleteUserSearchEntry(userId);
       userPagination.delete(userId);
       console.log(`[CLEANUP] Cleared old search results for user ${userId} (new URL received)`);
     }
@@ -1298,8 +1339,8 @@ bot.on('message', async (msg) => {
       ]
     ];
 
-    // Simpan URL untuk redownload
-    userSearchResults.set(`redownload_${userId}`, {
+    // Simpan URL untuk redownload (temporary, in-memory)
+    userRedownloadData.set(userId, {
       url: text,
       timestamp: Date.now()
     });
@@ -1330,7 +1371,7 @@ bot.on('callback_query', async (query) => {
     if (data.startsWith('redownload_')) {
       await bot.answerCallbackQuery(query.id);
 
-      const redownloadData = userSearchResults.get(`redownload_${userId}`);
+      const redownloadData = userRedownloadData.get(userId);
 
       if (!redownloadData || !redownloadData.url) {
         await bot.editMessageText(
@@ -1343,7 +1384,7 @@ bot.on('callback_query', async (query) => {
       const url = redownloadData.url;
 
       // Hapus data redownload
-      userSearchResults.delete(`redownload_${userId}`);
+      userRedownloadData.delete(userId);
 
       await bot.editMessageText(
         '⏳ Processing ulang...',
@@ -1363,7 +1404,7 @@ bot.on('callback_query', async (query) => {
       });
 
       // Hapus data redownload
-      userSearchResults.delete(`redownload_${userId}`);
+      userRedownloadData.delete(userId);
 
       await bot.editMessageText(
         '✅ Download dibatalkan.\n\n💡 Kirim URL baru jika ingin download video lain.',
@@ -1372,8 +1413,8 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Ambil search results user ini
-    const searchData = userSearchResults.get(userId);
+    // Ambil search results user ini dari JSON
+    const searchData = getUserSearchEntry(userId);
 
     if (!searchData) {
       await bot.answerCallbackQuery(query.id, {
@@ -1429,17 +1470,9 @@ bot.on('callback_query', async (query) => {
       // Update search results dengan halaman baru
       const newLinks = linksResult.links.slice(0, CONFIG.MAX_SEARCH_RESULTS);
 
-      // Save the new search results to history
-      addToSearchHistory(userId, {
+      // Save the new search results to JSON (menggantikan yang lama)
+      setUserSearchEntry(userId, {
         links: newLinks,
-        nextPageUrl: linksResult.nextPageUrl,
-        originalUrl: nextPageUrl,
-        currentPage: nextPageNumber
-      });
-
-      userSearchResults.set(userId, {
-        links: newLinks,
-        timestamp: Date.now(), // Update timestamp for memory cleanup
         nextPageUrl: linksResult.nextPageUrl,
         originalUrl: nextPageUrl,
         currentPage: nextPageNumber
@@ -1605,22 +1638,16 @@ bot.on('callback_query', async (query) => {
       const nextPageUrl = searchData.nextPageUrl;
 
       if (nextPageUrl) {
-        // Update search results in memory and JSON file
-        addToSearchHistory(userId, {
-          links: [], // Clear current links, will be loaded from next page
+        // Simpan nextPageUrl untuk navigation ke halaman selanjutnya
+        // Links dikosongkan karena semua video di halaman ini sudah didownload
+        setUserSearchEntry(userId, {
+          links: [],
           nextPageUrl: nextPageUrl,
-          originalUrl: nextPageUrl,
-          currentPage: searchData.currentPage + 1 // Increment current page
-        });
-        userSearchResults.set(userId, {
-          links: [], // Clear current links
-          timestamp: Date.now(),
-          nextPageUrl: nextPageUrl,
-          originalUrl: nextPageUrl,
-          currentPage: searchData.currentPage + 1
+          originalUrl: searchData.originalUrl,
+          currentPage: searchData.currentPage
         });
 
-        // Clear only pagination state, keep search data for next page
+        // Clear pagination state
         userPagination.delete(userId);
 
         const keyboard = [[{
@@ -1640,8 +1667,8 @@ bot.on('callback_query', async (query) => {
           }
         );
       } else {
-        // No next page, clear all search data
-        userSearchResults.delete(userId);
+        // No next page, clear all search data from JSON
+        deleteUserSearchEntry(userId);
         userPagination.delete(userId);
 
         await bot.sendMessage(
