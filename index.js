@@ -777,9 +777,8 @@ async function downloadVideo(url, chatId) {
       };
     }
     
-    const timestamp = Date.now();
     const urlPath = new URL(url).pathname;
-    let filename = path.basename(urlPath) || `video_${timestamp}.mp4`;
+    let filename = path.basename(urlPath) || `video_${Date.now()}.mp4`;
     
     // Sanitize filename untuk keamanan
     filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -787,11 +786,6 @@ async function downloadVideo(url, chatId) {
     if (!filename.includes('.')) {
       filename += '.mp4';
     }
-    
-    // Tambahkan timestamp untuk menghindari collision
-    const ext = path.extname(filename);
-    const nameWithoutExt = path.basename(filename, ext);
-    filename = `${nameWithoutExt}_${timestamp}${ext}`;
     
     filePath = path.join(CONFIG.DOWNLOAD_FOLDER, filename);
     const writer = fs.createWriteStream(filePath);
@@ -1112,9 +1106,19 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
     };
     const contentType = mimeTypes[ext] || 'video/mp4';
     
+    // Format caption yang lebih rapi dan centered
+    const filenameCleaned = result.filename.replace(/\.[^/.]+$/, ''); // Hapus extension
+    const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
+    
+    const caption = 
+      `▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+      `❖ ${filenameCleaned} ❖\n\n` +
+      `          ❖ ${fileSizeMB}MB ❖\n` +
+      `▬▬▬▬▬▬▬▬▬▬▬▬`;
+    
     // Kirim video ke user sebagai document dengan content-type yang tepat
     await bot.sendDocument(chatId, result.filePath, {
-      caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
+      caption: caption
     }, {
       contentType: contentType
     });
@@ -1441,9 +1445,19 @@ bot.on('callback_query', async (query) => {
             continue;
           }
           
+          // Format caption yang lebih rapi
+          const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
+          const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
+          
+          const caption = 
+            `▬▬▬▬ ${i + 1}/${links.length} ▬▬▬▬\n` +
+            `❖ ${filenameCleaned} ❖\n\n` +
+            `          ❖ ${fileSizeMB}MB ❖\n` +
+            `▬▬▬▬▬▬▬▬▬▬▬▬`;
+          
           // Kirim video
           await bot.sendDocument(chatId, result.filePath, {
-            caption: `📹 ${i + 1}/${links.length}: ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
+            caption: caption
           }, {
             contentType: 'video/mp4'
           });
