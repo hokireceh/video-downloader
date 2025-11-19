@@ -8,10 +8,10 @@ const dns = require('dns').promises;
 
 // ==================== PERSISTENT HISTORY MANAGEMENT ====================
 const HISTORY_FILE = path.join(__dirname, 'data', 'data.json');
-// Increased retention for downloads to 30 days
-const HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-// New: Retention for search results (30 minutes)
-const SEARCH_RETENTION_MS = 30 * 60 * 1000; // 30 minutes
+// Download history: dihapus setelah >24 jam
+const HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Search results: dihapus setelah >24 jam (atau ada URL baru)
+const SEARCH_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // Pastikan folder data ada
 const dataFolder = path.join(__dirname, 'data');
@@ -156,23 +156,6 @@ setInterval(cleanupOldHistory, 60 * 60 * 1000);
 console.log('[STARTUP] Running initial history cleanup...');
 cleanupOldHistory();
 
-// Load search results from JSON into memory (for users with valid, non-expired searches)
-const history = loadHistory();
-history.searches.forEach(search => {
-  const now = Date.now();
-  if ((now - search.timestamp) < SEARCH_RETENTION_MS) {
-    userSearchResults.set(search.userId, {
-      links: search.links,
-      nextPageUrl: search.nextPageUrl,
-      originalUrl: search.originalUrl,
-      currentPage: search.currentPage,
-      timestamp: search.timestamp
-    });
-  }
-});
-console.log(`[STARTUP] Loaded ${userSearchResults.size} active search results from JSON`);
-console.log('[STARTUP] History cleanup completed');
-
 // ==================== CONFIGURATION CONSTANTS ====================
 const CONFIG = {
   // Rate Limiting
@@ -247,6 +230,23 @@ const userSearchResults = new Map();
 
 // Pagination (simpan halaman aktif dan message ID)
 const userPagination = new Map();
+
+// Load search results from JSON into memory (for users with valid, non-expired searches)
+const history = loadHistory();
+history.searches.forEach(search => {
+  const now = Date.now();
+  if ((now - search.timestamp) < SEARCH_RETENTION_MS) {
+    userSearchResults.set(search.userId, {
+      links: search.links,
+      nextPageUrl: search.nextPageUrl,
+      originalUrl: search.originalUrl,
+      currentPage: search.currentPage,
+      timestamp: search.timestamp
+    });
+  }
+});
+console.log(`[STARTUP] Loaded ${userSearchResults.size} active search results from JSON`);
+console.log('[STARTUP] History cleanup completed`);
 
 // ==================== UTILITY FUNCTIONS ====================
 // Fungsi untuk cek rate limit
@@ -999,13 +999,16 @@ bot.onText(/\/help/, (msg) => {
     '• 🔍 Auto-detect: Direct/Page/Search\n' +
     '• 📋 Interactive menu untuk search\n' +
     '• ⬇️ Download 1 video atau semua\n' +
-    '• 🎯 Auto deduplicate links\n' +
+    '• 🎯 Auto deduplicate - cegah duplikat dalam 24 jam\n' +
     '• 🎥 Video kualitas asli (document)\n\n' +
     '⚠️ Batasan:\n' +
     `• Max file: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB\n` +
     `• Rate limit: ${CONFIG.MAX_REQUESTS_PER_WINDOW} video per ${CONFIG.RATE_LIMIT_WINDOW / 1000} detik\n` +
     `• Max ${CONFIG.MAX_SEARCH_RESULTS} video per search\n` +
     '• Format: MP4, WebM, MKV, AVI, MOV, FLV, WMV\n\n' +
+    '🗂️ Data Retention:\n' +
+    '• Download history: Dihapus setelah 24 jam\n' +
+    '• Search results: Dihapus saat kirim URL baru atau setelah 24 jam\n\n' +
     '💡 Commands:\n' +
     '/start - Mulai bot\n' +
     '/help - Bantuan\n' +
@@ -1250,6 +1253,18 @@ bot.on('message', async (msg) => {
   // Validasi URL dasar
   if (!text || !text.match(/^https?:\/\/.+/i)) {
     return bot.sendMessage(chatId, '❌ Kirim URL yang valid!\n\nContoh: https://example.com/video.mp4');
+  }
+
+  // Hapus search results lama saat ada URL baru (search retention policy)
+  // Search results: dihapus setelah ada URL baru + akan dihapus otomatis setelah >24 jam
+  if (userSearchResults.has(userId)) {
+    const oldSearch = userSearchResults.get(userId);
+    // Cek apakah ini URL baru (bukan dari search results yang ada)
+    if (!oldSearch.links || !oldSearch.links.includes(text)) {
+      userSearchResults.delete(userId);
+      userPagination.delete(userId);
+      console.log(`[CLEANUP] Cleared old search results for user ${userId} (new URL received)`);
+    }
   }
 
   // Cek rate limit
