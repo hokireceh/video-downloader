@@ -720,6 +720,12 @@ async function extractVideoLinksFromPage(pageUrl) {
         nextPageUrl = urlObj.toString();
 
         console.log(`[INFO] Auto-detected next page from URL pattern: page ${nextPage}`);
+      } else if (!pageParam) {
+        // Tidak ada page param = halaman 1, next page = 2
+        urlObj.searchParams.set('page', '2');
+        nextPageUrl = urlObj.toString();
+
+        console.log(`[INFO] Auto-detected next page from URL pattern: page 2 (from page 1)`);
       } else {
         // Fallback 2: Cek pattern &pageX (tanpa =) atau /pageX
         const urlStr = pageUrl.toLowerCase();
@@ -1146,7 +1152,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
         return;
       }
 
-      // Deteksi nomor halaman dari URL
+      // Deteksi nomor halaman dari URL (tidak ada page param = halaman 1)
       const urlObj = new URL(text);
       const pageParam = urlObj.searchParams.get('page');
       const urlPageNumber = pageParam ? parseInt(pageParam) : 1;
@@ -1456,7 +1462,8 @@ bot.on('callback_query', async (query) => {
       // Deteksi nomor halaman dari nextPageUrl
       const nextUrlObj = new URL(nextPageUrl);
       const nextPageParam = nextUrlObj.searchParams.get('page');
-      const nextPageNumber = nextPageParam ? parseInt(nextPageParam) : (searchData.currentPage || 1) + 1;
+      // Jika tidak ada page param, itu halaman 1
+      const nextPageNumber = nextPageParam ? parseInt(nextPageParam) : 1;
 
       await bot.editMessageText(
         `🔍 Memuat halaman ${nextPageNumber}...`,
@@ -1657,7 +1664,8 @@ bot.on('callback_query', async (query) => {
         // Deteksi nomor halaman berikutnya dari URL
         const nextUrlObj = new URL(nextPageUrl);
         const nextPageParam = nextUrlObj.searchParams.get('page');
-        const nextPageNumber = nextPageParam ? parseInt(nextPageParam) : searchData.currentPage + 1;
+        // Jika tidak ada page param, itu halaman 1
+        const nextPageNumber = nextPageParam ? parseInt(nextPageParam) : 1;
 
         // Simpan nextPageUrl untuk navigation ke halaman selanjutnya
         // Links dikosongkan karena semua video di halaman ini sudah didownload
