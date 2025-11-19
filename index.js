@@ -256,8 +256,9 @@ const CONFIG = {
   HTTP_REQUEST_TIMEOUT: 30000,
   // Download timeout: Local API needs longer timeout for large files (up to 2GB)
   // Cloud API: 60s is enough for max 50MB files
+  // Increased to 30 minutes for files up to 2GB
   DOWNLOAD_TIMEOUT: process.env.USE_LOCAL_API === 'true' 
-    ? 600000  // 10 minutes for Local API (large files)
+    ? 1800000  // 30 minutes for Local API (large files up to 2GB)
     : 60000,  // 1 minute for Cloud API (small files)
   SCRAPE_TIMEOUT: 30000,
 
@@ -954,12 +955,13 @@ async function downloadVideo(url, chatId) {
       responseType: 'stream',
       maxRedirects: 5,
       timeout: CONFIG.DOWNLOAD_TIMEOUT,
+      maxContentLength: CONFIG.MAX_FILE_SIZE,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': referer,
         'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br'
+        'Accept-Encoding': 'identity'  // Disable compression untuk video (sudah compressed)
       }
     });
 
@@ -1001,7 +1003,10 @@ async function downloadVideo(url, chatId) {
     }
 
     filePath = path.join(CONFIG.DOWNLOAD_FOLDER, filename);
-    const writer = fs.createWriteStream(filePath);
+    // Optimize write stream dengan buffer 1MB untuk file besar
+    const writer = fs.createWriteStream(filePath, {
+      highWaterMark: 1024 * 1024  // 1MB buffer
+    });
 
     // Track download progress dengan size check dan periodic logging
     let downloaded = 0;
@@ -1015,25 +1020,31 @@ async function downloadVideo(url, chatId) {
     response.data.on('data', (chunk) => {
       downloaded += chunk.length;
       
-      // Progress logging: log setiap 10% atau setiap 50MB
+      // Optimized progress logging untuk file besar
       if (totalSize > 0) {
         const percent = Math.floor((downloaded / totalSize) * 100);
-        if (percent >= lastLoggedPercent + 10 || (downloaded - (lastLoggedPercent * totalSize / 100)) >= 50 * 1024 * 1024) {
+        // Log setiap 20% untuk file >500MB, 10% untuk file <500MB
+        const logInterval = totalSize > 500 * 1024 * 1024 ? 20 : 10;
+        
+        if (percent >= lastLoggedPercent + logInterval) {
           lastLoggedPercent = percent;
           const downloadedMB = (downloaded / 1024 / 1024).toFixed(2);
           const totalMB = (totalSize / 1024 / 1024).toFixed(2);
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
           const speed = (downloaded / 1024 / (Date.now() - startTime)).toFixed(2);
-          console.log(`[PROGRESS] ${percent}% - ${downloadedMB}/${totalMB}MB - ${speed}MB/s - ${elapsed}s elapsed`);
+          const remaining = totalSize - downloaded;
+          const eta = remaining / (downloaded / (Date.now() - startTime)) / 1000;
+          console.log(`[PROGRESS] ${percent}% - ${downloadedMB}/${totalMB}MB - ${speed}MB/s - ${elapsed}s - ETA: ${eta.toFixed(0)}s`);
         }
       } else {
-        // Jika tidak ada Content-Length, log setiap 50MB
-        const downloadedMB = Math.floor(downloaded / (50 * 1024 * 1024));
+        // Jika tidak ada Content-Length, log setiap 100MB
+        const downloadedMB = Math.floor(downloaded / (100 * 1024 * 1024));
         if (downloadedMB > lastLoggedPercent) {
           lastLoggedPercent = downloadedMB;
           const mb = (downloaded / 1024 / 1024).toFixed(2);
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          console.log(`[PROGRESS] Downloaded: ${mb}MB - ${elapsed}s elapsed`);
+          const speed = (downloaded / 1024 / (Date.now() - startTime)).toFixed(2);
+          console.log(`[PROGRESS] Downloaded: ${mb}MB - ${speed}MB/s - ${elapsed}s`);
         }
       }
       
@@ -1049,6 +1060,11 @@ async function downloadVideo(url, chatId) {
       }
     });
 
+    // Set socket keepalive untuk koneksi lama (file besar)
+    if (response.request && response.request.socket) {
+      response.request.socket.setKeepAlive(true, 60000); // Keepalive setiap 60s
+    }
+    
     response.data.pipe(writer);
 
     return new Promise((resolve, reject) => {
@@ -1363,9 +1379,17 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       return;
     }
 
-    // Update status
+    // Update status dengan durasi download
+    const downloadDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    const downloadSpeed = (result.fileSize / 1024 / (Date.now() - startTime)).toFixed(2);
+    
     await bot.editMessageText(
-      `✅ Download selesai!\n📁 File: ${result.filename}\n📦 Size: ${(result.fileSize / 1024 / 1024).toFixed(2)}MB\n\n⏫ Uploading ke Telegram...`,
+      `✅ Download selesai!\n` +
+      `📁 File: ${result.filename}\n` +
+      `📦 Size: ${(result.fileSize / 1024 / 1024).toFixed(2)}MB\n` +
+      `⚡ Speed: ${downloadSpeed}MB/s\n` +
+      `⏱️ Durasi: ${downloadDuration}s\n\n` +
+      `⏫ Uploading ke Telegram...`,
       { chat_id: chatId, message_id: loadingMsg.message_id }
     );
 
