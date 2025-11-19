@@ -1456,9 +1456,12 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
 
     // Kirim video ke user sebagai document dengan content-type yang tepat
     try {
-      await bot.sendDocument(chatId, result.filePath, {
+      // Use file stream for Local API compatibility
+      const fileStream = fs.createReadStream(result.filePath);
+      await bot.sendDocument(chatId, fileStream, {
         caption: caption
       }, {
+        filename: result.filename,
         contentType: contentType
       });
 
@@ -1827,10 +1830,12 @@ bot.on('callback_query', async (query) => {
             `          ❖ ${fileSizeMB}MB ❖\n` +
             `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-          // Kirim video
-          await bot.sendDocument(chatId, result.filePath, {
+          // Kirim video (use stream for Local API)
+          const fileStream = fs.createReadStream(result.filePath);
+          await bot.sendDocument(chatId, fileStream, {
             caption: caption
           }, {
+            filename: result.filename,
             contentType: 'video/mp4'
           });
 
@@ -1990,9 +1995,12 @@ bot.on('callback_query', async (query) => {
       };
       const contentType = mimeTypes[ext] || 'video/mp4';
 
-      await bot.sendDocument(chatId, result.filePath, {
+      // Use stream for Local API
+      const fileStream = fs.createReadStream(result.filePath);
+      await bot.sendDocument(chatId, fileStream, {
         caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
       }, {
+        filename: result.filename,
         contentType: contentType
       });
 
