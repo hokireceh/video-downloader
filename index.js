@@ -132,31 +132,31 @@ function getUserSearchEntry(userId) {
   try {
     const history = loadHistory();
     const now = Date.now();
-    
+
     // Cleanup expired entries before reading
     history.searches = history.searches.filter(entry => {
       return (now - entry.timestamp) < SEARCH_RETENTION_MS;
     });
-    
+
     // Save if cleanup happened
     const originalLength = loadHistory().searches.length;
     if (history.searches.length < originalLength) {
       saveHistory(history);
     }
-    
+
     // Find user's search entry
     const userEntry = history.searches.find(s => s.userId === userId);
-    
+
     // Return null jika tidak ada
     // ATAU jika links kosong DAN tidak ada nextPageUrl (benar-benar empty)
     if (!userEntry) {
       return null;
     }
-    
+
     if ((!userEntry.links || userEntry.links.length === 0) && !userEntry.nextPageUrl) {
       return null;
     }
-    
+
     return userEntry;
   } catch (error) {
     console.error(`[ERROR] Failed to get search entry for user ${userId}: ${error.message}`);
@@ -173,9 +173,9 @@ function setUserSearchEntry(userId, searchData) {
       console.log(`[SEARCH] Skipped saving empty search results for user ${userId}`);
       return;
     }
-    
+
     const history = loadHistory();
-    
+
     // Replace existing entry atau tambah baru
     const existingIndex = history.searches.findIndex(s => s.userId === userId);
     const newEntry = {
@@ -186,7 +186,7 @@ function setUserSearchEntry(userId, searchData) {
       currentPage: searchData.currentPage,
       timestamp: Date.now()
     };
-    
+
     if (existingIndex > -1) {
       history.searches[existingIndex] = newEntry;
       const linkCount = searchData.links ? searchData.links.length : 0;
@@ -196,7 +196,7 @@ function setUserSearchEntry(userId, searchData) {
       const linkCount = searchData.links ? searchData.links.length : 0;
       console.log(`[SEARCH] Added search results for user ${userId} (${linkCount} links${searchData.nextPageUrl ? ', has next page' : ''})`);
     }
-    
+
     // Cleanup expired entries before saving
     cleanupOldHistory();
     saveHistory(history);
@@ -210,15 +210,15 @@ function deleteUserSearchEntry(userId) {
   try {
     const history = loadHistory();
     const initialLength = history.searches.length;
-    
+
     history.searches = history.searches.filter(s => s.userId !== userId);
-    
+
     if (history.searches.length < initialLength) {
       saveHistory(history);
       console.log(`[SEARCH] Deleted search results for user ${userId}`);
       return true;
     }
-    
+
     return false;
   } catch (error) {
     console.error(`[ERROR] Failed to delete search entry for user ${userId}: ${error.message}`);
@@ -631,6 +631,8 @@ async function extractVideoLinksFromPage(pageUrl) {
     const videoLinks = new Set(); // Pakai Set untuk auto-deduplicate
 
     // Cari semua link yang kemungkinan mengarah ke halaman video
+    let skippedCount = 0;
+
     $('a[href]').each((i, elem) => {
       let href = $(elem).attr('href');
       if (!href) return;
@@ -642,16 +644,23 @@ async function extractVideoLinksFromPage(pageUrl) {
         return; // Skip jika bukan http atau relative path
       }
 
+      // Validasi: harus sama domain dengan base URL (cegah external links)
+      let hrefHostname;
+      try {
+        hrefHostname = new URL(href).hostname;
+      } catch (e) {
+        return; // Invalid URL
+      }
+
+      if (hrefHostname !== baseUrl.hostname) {
+        return; // Skip external links
+      }
+
       // Filter: hanya ambil link ke halaman video individual
       const pathname = new URL(href).pathname;
+      const hrefLower = href.toLowerCase();
 
-      // Video page individual harus punya:
-      // 1. Hanya 1 segment path (tidak ada sub-path)
-      // 2. Ada underscore + angka di akhir sebagai ID (_1234567)
-      // 3. Biasanya ada kata "-video-" atau minimal panjang > 50 karakter
-      // 4. Bukan query string (tidak ada ?)
-
-      // Skip jika ada query string atau fragment
+      // Skip jika ada query string atau fragment (karena video page biasanya clean URL)
       if (href.includes('?') || href.includes('#')) {
         return;
       }
@@ -661,24 +670,46 @@ async function extractVideoLinksFromPage(pageUrl) {
 
       // Harus single-level path (depth = 1)
       if (pathParts.length !== 1) {
+        skippedCount++;
         return;
       }
 
-      const pathSegment = pathParts[0];
+      const pathSegment = pathParts[0].toLowerCase();
+
+      // Skip common non-video paths (lebih strict list)
+      const nonVideoKeywords = ['search', 'category', 'categories', 'tag', 'tags', 'login', 'signup', 'register', 'account', 'profile', 'settings', 'dmca', 'terms', 'privacy', 'about', 'contact', 'upload'];
+      if (nonVideoKeywords.some(keyword => pathSegment === keyword || pathSegment.startsWith(keyword + '-') || pathSegment.startsWith(keyword + '_'))) {
+        skippedCount++;
+        return;
+      }
 
       // Harus ada pattern _angka di akhir (ID video)
-      if (!pathSegment.match(/_\d+$/)) {
+      const idMatch = pathSegment.match(/_(\d+)$/);
+      if (!idMatch) {
+        skippedCount++;
         return;
       }
 
-      // Harus cukup panjang (video individual biasanya punya nama panjang)
-      // atau mengandung kata "-video-"
-      if (pathSegment.length < 50 && !pathSegment.includes('-video-')) {
+      // ID harus paling tidak 5 digit (relax dari 6 ke 5)
+      const videoId = idMatch[1];
+      if (videoId.length < 5) {
+        skippedCount++;
         return;
       }
 
+      // Relax: Harus cukup panjang (minimal 40 karakter) ATAU mengandung kata "-video-" atau "-porn-"
+      if (pathSegment.length < 40 && !pathSegment.includes('-video-') && !pathSegment.includes('-porn-')) {
+        skippedCount++;
+        return;
+      }
+
+      // Passed all validations
       videoLinks.add(href);
     });
+
+    if (skippedCount > 0) {
+      console.log(`[INFO] Skipped ${skippedCount} non-video links during extraction`);
+    }
 
     const links = Array.from(videoLinks);
     console.log(`[SUCCESS] Found ${links.length} unique video links`);
