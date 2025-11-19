@@ -570,11 +570,18 @@ function generatePaginationKeyboard(links, page) {
 }
 
 // Fungsi untuk info halaman
-function getPageInfo(totalVideos, currentPage) {
+// urlPageNumber: nomor halaman dari URL (page=6 berarti halaman 6)
+// currentPage: internal pagination (0-based) untuk video per halaman
+function getPageInfo(totalVideos, currentPage, urlPageNumber = null) {
   const videosPerPage = CONFIG.VIDEOS_PER_PAGE;
   const totalPages = Math.ceil(totalVideos / videosPerPage);
   const startIdx = currentPage * videosPerPage + 1;
   const endIdx = Math.min((currentPage + 1) * videosPerPage, totalVideos);
+
+  // Jika ada urlPageNumber, tampilkan itu sebagai halaman aktual
+  if (urlPageNumber !== null) {
+    return `📄 Halaman ${urlPageNumber} - Video ${startIdx}-${endIdx} dari ${totalVideos} di halaman ini`;
+  }
 
   return `📄 Halaman ${currentPage + 1}/${totalPages} (Video ${startIdx}-${endIdx} dari ${totalVideos})`;
 }
@@ -1139,13 +1146,18 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
         return;
       }
 
+      // Deteksi nomor halaman dari URL
+      const urlObj = new URL(text);
+      const pageParam = urlObj.searchParams.get('page');
+      const urlPageNumber = pageParam ? parseInt(pageParam) : 1;
+
       // Simpan links untuk user ini di JSON (menggantikan yang lama)
       const links = linksResult.links.slice(0, CONFIG.MAX_SEARCH_RESULTS);
       setUserSearchEntry(userId, {
         links: links,
         nextPageUrl: linksResult.nextPageUrl,
         originalUrl: text,
-        currentPage: 1 // Start from page 1
+        currentPage: urlPageNumber // Nomor halaman dari URL
       });
 
       // Simpan state pagination (halaman 0 = awal)
@@ -1156,7 +1168,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
 
       // Generate keyboard untuk halaman pertama
       const keyboard = generatePaginationKeyboard(links, 0);
-      const pageInfo = getPageInfo(links.length, 0);
+      const pageInfo = getPageInfo(links.length, 0, urlPageNumber);
 
       await bot.editMessageText(
         `✅ Ditemukan ${links.length} video!\n\n` +
@@ -1441,7 +1453,10 @@ bot.on('callback_query', async (query) => {
         return;
       }
 
-      const nextPageNumber = (searchData.currentPage || 1) + 1;
+      // Deteksi nomor halaman dari nextPageUrl
+      const nextUrlObj = new URL(nextPageUrl);
+      const nextPageParam = nextUrlObj.searchParams.get('page');
+      const nextPageNumber = nextPageParam ? parseInt(nextPageParam) : (searchData.currentPage || 1) + 1;
 
       await bot.editMessageText(
         `🔍 Memuat halaman ${nextPageNumber}...`,
@@ -1486,7 +1501,7 @@ bot.on('callback_query', async (query) => {
 
       // Generate keyboard untuk halaman pertama
       const keyboard = generatePaginationKeyboard(newLinks, 0);
-      const pageInfo = getPageInfo(newLinks.length, 0);
+      const pageInfo = getPageInfo(newLinks.length, 0, nextPageNumber);
 
       await bot.editMessageText(
         `✅ Halaman ${nextPageNumber}: Ditemukan ${newLinks.length} video!\n\n` +
@@ -1513,7 +1528,8 @@ bot.on('callback_query', async (query) => {
 
       // Generate keyboard baru
       const keyboard = generatePaginationKeyboard(links, newPage);
-      const pageInfo = getPageInfo(links.length, newPage);
+      const urlPageNumber = searchData.currentPage; // Nomor halaman dari URL
+      const pageInfo = getPageInfo(links.length, newPage, urlPageNumber);
 
       // Edit message (auto replace, tidak create new message)
       await bot.editMessageText(
@@ -1638,6 +1654,11 @@ bot.on('callback_query', async (query) => {
       const nextPageUrl = searchData.nextPageUrl;
 
       if (nextPageUrl) {
+        // Deteksi nomor halaman berikutnya dari URL
+        const nextUrlObj = new URL(nextPageUrl);
+        const nextPageParam = nextUrlObj.searchParams.get('page');
+        const nextPageNumber = nextPageParam ? parseInt(nextPageParam) : searchData.currentPage + 1;
+
         // Simpan nextPageUrl untuk navigation ke halaman selanjutnya
         // Links dikosongkan karena semua video di halaman ini sudah didownload
         setUserSearchEntry(userId, {
@@ -1651,7 +1672,7 @@ bot.on('callback_query', async (query) => {
         userPagination.delete(userId);
 
         const keyboard = [[{
-          text: `➡️ Download Halaman ${searchData.currentPage + 2}`,
+          text: `➡️ Download Halaman ${nextPageNumber}`,
           callback_data: 'load_next_page'
         }]];
 
