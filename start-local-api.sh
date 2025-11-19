@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Load .env file if it exists
+if [ -f .env ]; then
+  export $(cat .env | grep -v '^#' | grep -v '^$' | xargs)
+fi
+
 # Configuration
 API_ID="${TELEGRAM_API_ID}"
 API_HASH="${TELEGRAM_API_HASH}"
