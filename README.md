@@ -1,4 +1,3 @@
-
 # Telegram Video Downloader Bot 🤖📹
 
 Bot Telegram canggih untuk mendownload video dari berbagai sumber dengan fitur smart scraping, interactive menu, dan persistent history management.
@@ -196,31 +195,31 @@ const CONFIG = {
   // Rate Limiting
   RATE_LIMIT_WINDOW: 60000,           // 60 detik
   MAX_REQUESTS_PER_WINDOW: 5,         // Max 5 requests per window
-  
+
   // File Management
   MAX_FILE_SIZE: 50000000,            // 50MB
   DOWNLOAD_FOLDER: './downloads',
   FILE_CLEANUP_AGE: 3600000,          // 1 jam
   FILE_CLEANUP_INTERVAL: 1800000,     // 30 menit
   FILE_AUTO_DELETE_DELAY: 5000,       // 5 detik
-  
+
   // Pagination
   VIDEOS_PER_PAGE: 5,                 // 5 video per halaman
   MAX_SEARCH_RESULTS: 20,             // Max 20 video per search
-  
+
   // Timeouts
   HTTP_REQUEST_TIMEOUT: 30000,        // 30 detik
   DOWNLOAD_TIMEOUT: 60000,            // 60 detik
   SCRAPE_TIMEOUT: 30000,              // 30 detik
-  
+
   // Download Progress
   PROGRESS_UPDATE_INTERVAL: 3,        // Update setiap 3 video
   BATCH_DOWNLOAD_DELAY: 2000,         // 2 detik delay antar video
-  
+
   // Memory Management
   SEARCH_RESULTS_TTL: 1800000,        // 30 menit
   MEMORY_CLEANUP_INTERVAL: 300000,    // 5 menit
-  
+
   // Security
   MIN_FILE_SIZE: 50000,               // 50KB (validasi file)
 };
@@ -288,8 +287,8 @@ Bot include comprehensive console logging:
 ```javascript
 console.log('[INFO] ...')       // Info messages
 console.log('[SUCCESS] ...')    // Success messages
-console.warn('[WARN] ...')      // Warnings
-console.error('[ERROR] ...')    // Errors
+console.log('[WARN] ...')      // Warnings
+console.log('[ERROR] ...')    // Errors
 console.log('[CLEANUP] ...')    // Cleanup operations
 console.log('[HISTORY] ...')    // History operations
 console.log('[SEARCH] ...')     // Search operations
@@ -324,7 +323,7 @@ Bot memiliki comprehensive error handling:
 ## 🗂️ Data Retention Policy
 
 ### Download History
-- **Purpose**: Mencegah duplikasi download dalam 24 jam
+- **Purpose**: Mencegah dupliasi download dalam 24 jam
 - **Retention**: 24 jam
 - **Auto Cleanup**: Setiap 1 jam + setiap kali add new entry
 - **Data Stored**: URL, user ID, filename, timestamp
