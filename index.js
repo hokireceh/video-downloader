@@ -307,7 +307,16 @@ function validateEnvironment() {
 validateEnvironment();
 
 // Inisialisasi bot dengan support Local API (optional)
-const botOptions = { polling: true };
+const botOptions = { 
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: {
+      timeout: 10
+    }
+  },
+  filepath: false // Disable file download via bot API (we handle it manually)
+};
 
 // Check if Local API is enabled
 const useLocalAPI = process.env.USE_LOCAL_API === 'true';
@@ -1012,10 +1021,19 @@ async function downloadVideo(url, chatId) {
     let downloaded = 0;
     let abortedDueToSize = false;
     let lastLoggedPercent = 0;
+    let lastUserUpdatePercent = 0;
     const totalSize = parseInt(contentLength) || 0;
     const startTime = Date.now();
+    let progressMessageId = null;
     
     console.log(`[DOWNLOAD] Starting download: ${filename} (${(totalSize / 1024 / 1024).toFixed(2)}MB)`);
+    
+    // Send initial progress message to user
+    if (totalSize > 100 * 1024 * 1024) { // Only for files >100MB
+      bot.sendMessage(chatId, `📥 Download besar dimulai...\n📦 Size: ${(totalSize / 1024 / 1024).toFixed(2)}MB\n\n⏳ Progress akan diupdate setiap 10%...`)
+        .then(msg => { progressMessageId = msg.message_id; })
+        .catch(err => console.error('[WARN] Failed to send progress message:', err.message));
+    }
     
     response.data.on('data', (chunk) => {
       downloaded += chunk.length;
@@ -1035,6 +1053,19 @@ async function downloadVideo(url, chatId) {
           const remaining = totalSize - downloaded;
           const eta = remaining / (downloaded / (Date.now() - startTime)) / 1000;
           console.log(`[PROGRESS] ${percent}% - ${downloadedMB}/${totalMB}MB - ${speed}MB/s - ${elapsed}s - ETA: ${eta.toFixed(0)}s`);
+          
+          // Update user setiap 10% untuk file besar
+          if (progressMessageId && percent >= lastUserUpdatePercent + 10) {
+            lastUserUpdatePercent = percent;
+            const progressBar = '▓'.repeat(Math.floor(percent / 10)) + '░'.repeat(10 - Math.floor(percent / 10));
+            bot.editMessageText(
+              `📥 Downloading...\n\n${progressBar} ${percent}%\n\n` +
+              `📦 ${downloadedMB}/${totalMB}MB\n` +
+              `⚡ ${speed}MB/s\n` +
+              `⏱️ ETA: ${Math.ceil(eta / 60)} menit`,
+              { chat_id: chatId, message_id: progressMessageId }
+            ).catch(() => {}); // Ignore edit errors
+          }
         }
       } else {
         // Jika tidak ada Content-Length, log setiap 100MB
@@ -1070,6 +1101,11 @@ async function downloadVideo(url, chatId) {
     return new Promise((resolve, reject) => {
       writer.on('finish', () => {
         try {
+          // Delete progress message if exists
+          if (progressMessageId) {
+            bot.deleteMessage(chatId, progressMessageId).catch(() => {});
+          }
+          
           const stats = fs.statSync(filePath);
           const fileSize = stats.size;
 
@@ -1988,13 +2024,38 @@ bot.on('callback_query', async (query) => {
   }
 });
 
-// Error handling yang lebih baik
+// Error handling yang lebih baik dengan auto-restart
+let pollingErrorCount = 0;
+const MAX_POLLING_ERRORS = 3;
+
 bot.on('polling_error', (error) => {
   console.error(`[ERROR] Polling error: ${error.code || error.message}`);
 
   // Jangan crash bot untuk error umum
-  if (error.code === 'EFATAL') {
-    console.error('[FATAL] Fatal polling error, bot mungkin perlu restart');
+  if (error.code === 'EFATAL' || error.code === 'ETELEGRAM') {
+    pollingErrorCount++;
+    console.error(`[FATAL] Fatal polling error (${pollingErrorCount}/${MAX_POLLING_ERRORS})`);
+    
+    if (pollingErrorCount >= MAX_POLLING_ERRORS) {
+      console.error('[RESTART] Too many polling errors, restarting polling...');
+      pollingErrorCount = 0;
+      
+      // Stop and restart polling
+      bot.stopPolling().then(() => {
+        setTimeout(() => {
+          bot.startPolling().then(() => {
+            console.log('[SUCCESS] Polling restarted successfully');
+          }).catch(err => {
+            console.error('[ERROR] Failed to restart polling:', err.message);
+          });
+        }, 2000);
+      }).catch(err => {
+        console.error('[ERROR] Failed to stop polling:', err.message);
+      });
+    }
+  } else {
+    // Reset counter untuk error non-fatal
+    pollingErrorCount = 0;
   }
 });
 
