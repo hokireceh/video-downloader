@@ -1284,6 +1284,8 @@ bot.onText(/\/stats/, (msg) => {
 
 // Fungsi untuk proses download video (bisa dipanggil ulang)
 async function processVideoDownload(text, chatId, userId, existingMessageId = null, skipDuplicateCheck = false) {
+  const startTime = Date.now(); // Track start time for duration calculation
+  
   // Kirim status
   const loadingMsg = existingMessageId 
     ? { message_id: existingMessageId, chat: { id: chatId } }
