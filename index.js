@@ -6,6 +6,99 @@ const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
 
+// ==================== PERSISTENT HISTORY MANAGEMENT ====================
+const HISTORY_FILE = path.join(__dirname, 'data', 'data.json');
+const HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 jam
+
+// Pastikan folder data ada
+const dataFolder = path.join(__dirname, 'data');
+if (!fs.existsSync(dataFolder)) {
+  fs.mkdirSync(dataFolder, { recursive: true });
+  console.log(`[INFO] Created data folder: ${dataFolder}`);
+}
+
+// Load history dari file
+function loadHistory() {
+  try {
+    if (!fs.existsSync(HISTORY_FILE)) {
+      return { downloads: [] };
+    }
+    const data = fs.readFileSync(HISTORY_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error(`[ERROR] Failed to load history: ${error.message}`);
+    return { downloads: [] };
+  }
+}
+
+// Save history ke file
+function saveHistory(history) {
+  try {
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf8');
+  } catch (error) {
+    console.error(`[ERROR] Failed to save history: ${error.message}`);
+  }
+}
+
+// Cleanup history yang lebih dari 24 jam
+function cleanupOldHistory() {
+  try {
+    const history = loadHistory();
+    const now = Date.now();
+    const before = history.downloads.length;
+    
+    history.downloads = history.downloads.filter(entry => {
+      return (now - entry.timestamp) < HISTORY_RETENTION_MS;
+    });
+    
+    const removed = before - history.downloads.length;
+    
+    if (removed > 0) {
+      saveHistory(history);
+      console.log(`[CLEANUP] Removed ${removed} old history entries (>24h)`);
+    }
+  } catch (error) {
+    console.error(`[ERROR] History cleanup failed: ${error.message}`);
+  }
+}
+
+// Cek apakah URL sudah pernah didownload oleh user ini dalam 24 jam terakhir
+function isAlreadyDownloaded(url, userId) {
+  const history = loadHistory();
+  const now = Date.now();
+  
+  return history.downloads.some(entry => {
+    const isMatch = entry.url === url && entry.userId === userId;
+    const isRecent = (now - entry.timestamp) < HISTORY_RETENTION_MS;
+    return isMatch && isRecent;
+  });
+}
+
+// Tambah record download ke history
+function addToHistory(url, userId, filename) {
+  try {
+    const history = loadHistory();
+    
+    history.downloads.push({
+      url: url,
+      userId: userId,
+      filename: filename,
+      timestamp: Date.now()
+    });
+    
+    saveHistory(history);
+    console.log(`[HISTORY] Added: ${filename} for user ${userId}`);
+  } catch (error) {
+    console.error(`[ERROR] Failed to add to history: ${error.message}`);
+  }
+}
+
+// Jalankan cleanup history setiap 1 jam
+setInterval(cleanupOldHistory, 60 * 60 * 1000);
+
+// Cleanup saat startup
+cleanupOldHistory();
+
 // ==================== CONFIGURATION CONSTANTS ====================
 const CONFIG = {
   // Rate Limiting
@@ -900,6 +993,15 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId, `❌ ${urlValidation.error}`);
   }
   
+  // Cek duplikasi: apakah URL ini sudah pernah didownload dalam 24 jam terakhir?
+  if (isAlreadyDownloaded(text, userId)) {
+    return bot.sendMessage(
+      chatId,
+      '⚠️ Video ini sudah pernah kamu download dalam 24 jam terakhir!\n\n' +
+      '💡 Tip: History otomatis dibersihkan setiap 24 jam. Jika kamu benar-benar ingin download lagi, tunggu sebentar atau gunakan URL berbeda.'
+    );
+  }
+  
   // Kirim status
   const loadingMsg = await bot.sendMessage(chatId, '⏳ Processing...');
   
@@ -1050,6 +1152,9 @@ bot.on('message', async (msg) => {
     }, {
       contentType: contentType
     });
+    
+    // Simpan ke history untuk mencegah duplikasi
+    addToHistory(text, userId, result.filename);
     
     // Hapus pesan loading
     await bot.deleteMessage(chatId, loadingMsg.message_id);
@@ -1215,9 +1320,19 @@ bot.on('callback_query', async (query) => {
       let success = 0;
       let failed = 0;
       
+      let skipped = 0;
+      
       for (let i = 0; i < links.length; i++) {
         try {
           const link = links[i];
+          
+          // Cek duplikasi - skip jika sudah pernah didownload
+          if (isAlreadyDownloaded(link, userId)) {
+            console.log(`[INFO] Skipping ${i + 1}/${links.length}: Already downloaded (${link})`);
+            skipped++;
+            continue;
+          }
+          
           console.log(`[INFO] Downloading ${i + 1}/${links.length}: ${link}`);
           
           // Update progress setiap N video
@@ -1225,7 +1340,8 @@ bot.on('callback_query', async (query) => {
             await bot.editMessageText(
               `⏬ Progress: ${i}/${links.length} video\n\n` +
               `✓ Berhasil: ${success}\n` +
-              `✗ Gagal: ${failed}\n\n` +
+              `✗ Gagal: ${failed}\n` +
+              `⏭️ Dilewati (duplikat): ${skipped}\n\n` +
               `Masih memproses...`,
               { chat_id: chatId, message_id: messageId }
             ).catch(() => {}); // Ignore edit errors
@@ -1261,6 +1377,9 @@ bot.on('callback_query', async (query) => {
           }, {
             contentType: 'video/mp4'
           });
+          
+          // Simpan ke history
+          addToHistory(link, userId, result.filename);
           
           // Auto-cleanup
           setTimeout(() => {
@@ -1315,7 +1434,8 @@ bot.on('callback_query', async (query) => {
           chatId,
           `✅ Selesai!\n\n` +
           `✓ Berhasil: ${success} video\n` +
-          `✗ Gagal: ${failed} video\n\n` +
+          `✗ Gagal: ${failed} video\n` +
+          `⏭️ Dilewati (duplikat): ${skipped} video\n\n` +
           `📄 Ada halaman selanjutnya! Klik tombol di bawah untuk lanjut.`,
           { 
             reply_markup: { inline_keyboard: keyboard }
@@ -1327,7 +1447,8 @@ bot.on('callback_query', async (query) => {
           chatId,
           `✅ Selesai!\n\n` +
           `✓ Berhasil: ${success} video\n` +
-          `✗ Gagal: ${failed} video\n\n` +
+          `✗ Gagal: ${failed} video\n` +
+          `⏭️ Dilewati (duplikat): ${skipped} video\n\n` +
           `📄 Ini halaman terakhir.`
         );
         
@@ -1348,9 +1469,18 @@ bot.on('callback_query', async (query) => {
         return;
       }
       
-      await bot.answerCallbackQuery(query.id);
-      
       const link = links[index];
+      
+      // Cek duplikasi
+      if (isAlreadyDownloaded(link, userId)) {
+        await bot.answerCallbackQuery(query.id, {
+          text: '⚠️ Video ini sudah pernah kamu download dalam 24 jam terakhir!',
+          show_alert: true
+        });
+        return;
+      }
+      
+      await bot.answerCallbackQuery(query.id);
       
       await bot.editMessageText(
         `⏳ Memproses video ${index + 1}...\n\n🔍 Mencari video...`,
@@ -1407,6 +1537,9 @@ bot.on('callback_query', async (query) => {
       }, {
         contentType: contentType
       });
+      
+      // Simpan ke history
+      addToHistory(link, userId, result.filename);
       
       await bot.deleteMessage(chatId, messageId);
       
