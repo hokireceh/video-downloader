@@ -35,4 +35,4 @@ temp/
 *.tmp
 
 # Data folder (persistent history)
-data/
+data/attached_assets
