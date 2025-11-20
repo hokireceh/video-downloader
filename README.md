@@ -369,4 +369,20 @@ Bot akan tetap running 24/7 di Replit dengan:
 
 ---
 
+## 💰 Donasi
+
+Jika bot ini bermanfaat, dukung development dengan donasi:
+
+### ⚡ IDR (Rupiah)
+- **[Trakteer](https://trakteer.id/garapanairdrop/tip)**
+
+---
+
+### ⚡ USD BNB ETH HYPE XPL (EVM Networks)
+```
+0x77bFeEa5Dd20C4Cf3B716A7CEf39E29897797aEC
+```
+
+---
+
 Made with ❤️ by hokireceh
