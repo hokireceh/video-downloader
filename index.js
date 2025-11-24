@@ -1696,6 +1696,8 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
 }
 
 // Handle /cek command - show chat and user info
+// NOTE: This command ALWAYS works regardless of authorization
+// User needs this to get IDs for setting up authorization
 bot.onText(/^\/cek/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -1721,6 +1723,7 @@ bot.onText(/^\/cek/, async (msg) => {
 });
 
 // Handle /botid command - show bot's own ID
+// NOTE: This command ALWAYS works regardless of authorization
 bot.onText(/^\/botid/, async (msg) => {
   try {
     const botInfo = await bot.getMe();
