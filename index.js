@@ -2160,17 +2160,25 @@ bot.on('callback_query', async (query) => {
             `          ❖ ${fileSizeMB}MB ❖\n` +
             `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-          // Kirim video (use file stream for both Local and Cloud API)
-          const fileStream = fs.createReadStream(result.filePath);
-          await bot.sendDocument(chatId, fileStream, {
-            caption: caption
-          }, {
-            filename: result.filename,
-            contentType: 'video/mp4'
-          });
-
-          // Simpan ke history
-          addToHistory(link, userId, result.filename);
+          // Kirim video (use file stream like multi-select - proven working approach)
+          let uploadSuccess = false;
+          let uploadAttempts = 0;
+          while (!uploadSuccess && uploadAttempts < 2) {
+            try {
+              uploadAttempts++;
+              const ext = path.extname(result.filename).toLowerCase();
+              const mimeTypes = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv' };
+              const contentType = mimeTypes[ext] || 'video/mp4';
+              
+              const fileStream = fs.createReadStream(result.filePath);
+              await bot.sendDocument(chatId, fileStream, { caption: caption, contentType }, { timeout: 300000 });
+              uploadSuccess = true;
+              addToHistory(link, userId, result.filename);
+            } catch (err) {
+              console.warn(`[WARN] Upload attempt ${uploadAttempts} failed: ${err.message}`);
+              if (uploadAttempts >= 2) console.error(`[ERROR] Failed to send video after ${uploadAttempts} attempts`);
+            }
+          }
 
           // Auto-cleanup
           setTimeout(() => {
