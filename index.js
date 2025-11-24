@@ -1743,6 +1743,29 @@ bot.onText(/^\/botid/, async (msg) => {
   }
 });
 
+// Handle /chat command - relay message to target group
+// Usage: /chat message to send
+bot.onText(/^\/chat\s+(.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const targetGroupId = process.env.RELAY_GROUP_ID;
+  const messageText = match[1]; // Extract text after /chat
+
+  // Check if target group is configured
+  if (!targetGroupId) {
+    return bot.sendMessage(chatId, '❌ Relay group tidak dikonfigurasi!\n\nSet RELAY_GROUP_ID di .env');
+  }
+
+  try {
+    // Send message to target group
+    await bot.sendMessage(targetGroupId, messageText);
+    await bot.sendMessage(chatId, '✅ Pesan terkirim ke group!');
+    console.log(`[RELAY] Message from user ${msg.from.id} sent to group ${targetGroupId}: ${messageText}`);
+  } catch (error) {
+    console.error(`[ERROR] Failed to send relay message: ${error.message}`);
+    await bot.sendMessage(chatId, `❌ Gagal kirim ke group!\n\nError: ${error.message}`);
+  }
+});
+
 // Handle URL video
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
