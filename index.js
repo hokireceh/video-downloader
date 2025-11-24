@@ -252,7 +252,7 @@ const CONFIG = {
 
   // Download Progress
   PROGRESS_UPDATE_INTERVAL: 3,
-  BATCH_DOWNLOAD_DELAY: 2000,
+  BATCH_DOWNLOAD_DELAY: 0,
 
   // Memory Management
   SEARCH_RESULTS_TTL: 1800000, // Keep search results in memory for 30 minutes
