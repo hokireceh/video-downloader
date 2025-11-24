@@ -2112,21 +2112,35 @@ bot.on('callback_query', async (query) => {
             ).catch(() => {}); // Ignore edit errors
           }
 
-          // Ekstrak video dari halaman
-          const extractResult = await Promise.race([
-            extractVideoFromHTML(link),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), CONFIG.SCRAPE_TIMEOUT))
-          ]).catch(err => ({ success: false, error: err.message }));
+          // Check if link is already a direct video URL
+          const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp'];
+          const urlPath = new URL(link).pathname.toLowerCase();
+          const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext));
 
-          if (!extractResult.success) {
-            console.warn(`[WARN] Failed to extract video from ${link}: ${extractResult.error}`);
-            failed++;
-            continue;
+          let videoUrl;
+          if (isDirectVideoLink) {
+            // Already a direct video URL, skip extraction
+            console.log(`[INFO] Direct video URL detected, skipping extraction`);
+            videoUrl = link;
+          } else {
+            // Need to extract video URL from HTML page
+            const extractResult = await Promise.race([
+              extractVideoFromHTML(link),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), CONFIG.SCRAPE_TIMEOUT))
+            ]).catch(err => ({ success: false, error: err.message }));
+
+            if (!extractResult.success) {
+              console.warn(`[WARN] Failed to extract video from ${link}: ${extractResult.error}`);
+              failed++;
+              continue;
+            }
+
+            videoUrl = extractResult.videoUrl;
           }
 
           // Download video
           const result = await Promise.race([
-            downloadVideo(extractResult.videoUrl, chatId),
+            downloadVideo(videoUrl, chatId),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Download timeout')), CONFIG.DOWNLOAD_TIMEOUT))
           ]).catch(err => ({ success: false, error: err.message }));
 
