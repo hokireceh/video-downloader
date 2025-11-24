@@ -2160,20 +2160,14 @@ bot.on('callback_query', async (query) => {
             `          ❖ ${fileSizeMB}MB ❖\n` +
             `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-          // Kirim video
-          if (useLocalAPI) {
-            await bot.sendDocument(chatId, result.filePath, {
-              caption: caption
-            });
-          } else {
-            const fileStream = fs.createReadStream(result.filePath);
-            await bot.sendDocument(chatId, fileStream, {
-              caption: caption
-            }, {
-              filename: result.filename,
-              contentType: 'video/mp4'
-            });
-          }
+          // Kirim video (use file stream for both Local and Cloud API)
+          const fileStream = fs.createReadStream(result.filePath);
+          await bot.sendDocument(chatId, fileStream, {
+            caption: caption
+          }, {
+            filename: result.filename,
+            contentType: 'video/mp4'
+          });
 
           // Simpan ke history
           addToHistory(link, userId, result.filename);
