@@ -1743,6 +1743,43 @@ bot.onText(/^\/botid/, async (msg) => {
   }
 });
 
+// Handle /relay_status command - check relay configuration
+bot.onText(/^\/relay_status/, async (msg) => {
+  const targetGroupId = process.env.RELAY_GROUP_ID;
+  const status = targetGroupId ? `✅ Configured: ${targetGroupId}` : '❌ Not configured';
+  
+  await bot.sendMessage(msg.chat.id, `🔗 Relay Status:\n${status}`);
+});
+
+// Handle /relay_help command - show relay usage
+bot.onText(/^\/relay_help/, async (msg) => {
+  const help = `
+📖 **Relay Command Guide**
+
+**Cara kerja:**
+1. Bot menerima message dari private chat
+2. Bot forward ke target group
+3. Pesan tampil di group dengan sender = BOT
+
+**Command:**
+\`/chat <pesan>\` - Kirim pesan ke group relay
+\`/relay_status\` - Check konfigurasi relay
+
+**Setup (hanya sekali):**
+1. Kirim \`/cek\` di group target → ambil Chat ID
+2. Set RELAY_GROUP_ID di environment variable (Secrets tab)
+   Format: \`-1001234567890\` (harus negatif untuk grup)
+3. Restart bot
+4. Try \`/relay_status\` untuk verify
+
+**Example:**
+Kirim ke bot: \`/chat !a sepibukansapi vip\`
+Hasilnya di group: \`!a sepibukansapi vip\`
+  `.trim();
+  
+  await bot.sendMessage(msg.chat.id, help, { parse_mode: 'Markdown' });
+});
+
 // Handle /chat command - relay message to target group
 // Usage: /chat message to send
 bot.onText(/^\/chat\s+(.+)/, async (msg, match) => {
@@ -1750,18 +1787,23 @@ bot.onText(/^\/chat\s+(.+)/, async (msg, match) => {
   const targetGroupId = process.env.RELAY_GROUP_ID;
   const messageText = match[1]; // Extract text after /chat
 
+  console.log(`[DEBUG] /chat command - targetGroupId: ${targetGroupId}, message: ${messageText}`);
+
   // Check if target group is configured
-  if (!targetGroupId) {
-    return bot.sendMessage(chatId, '❌ Relay group tidak dikonfigurasi!\n\nSet RELAY_GROUP_ID di .env');
+  if (!targetGroupId || targetGroupId.trim() === '') {
+    console.error(`[ERROR] RELAY_GROUP_ID not configured`);
+    return bot.sendMessage(chatId, '❌ Relay group tidak dikonfigurasi!\n\nGunakan /relay_status untuk check status.');
   }
 
   try {
     // Send message to target group
+    console.log(`[RELAY] Sending message to group ${targetGroupId}: "${messageText}"`);
     await bot.sendMessage(targetGroupId, messageText);
     await bot.sendMessage(chatId, '✅ Pesan terkirim ke group!');
-    console.log(`[RELAY] Message from user ${msg.from.id} sent to group ${targetGroupId}: ${messageText}`);
+    console.log(`[RELAY] ✓ Message successfully sent`);
   } catch (error) {
     console.error(`[ERROR] Failed to send relay message: ${error.message}`);
+    console.error(`[ERROR] Stack:`, error.stack);
     await bot.sendMessage(chatId, `❌ Gagal kirim ke group!\n\nError: ${error.message}`);
   }
 });
