@@ -422,6 +422,35 @@ function cleanupExpiredMemoryData() {
 // Jalankan memory cleanup secara periodik
 setInterval(cleanupExpiredMemoryData, CONFIG.MEMORY_CLEANUP_INTERVAL);
 
+// ==================== AUTHORIZATION CHECK ====================
+function isAuthorized(chatId, userId) {
+  const allowedGroups = process.env.ALLOWED_GROUPS || '';
+  const allowedAdmins = process.env.ALLOWED_ADMINS || '';
+
+  // Jika kosong, semua authorized
+  if (!allowedGroups && !allowedAdmins) {
+    return true;
+  }
+
+  // Check group (if ALLOWED_GROUPS is set)
+  if (allowedGroups) {
+    const groupList = allowedGroups.split(',').map(g => g.trim()).filter(g => g);
+    if (groupList.length > 0 && !groupList.includes(chatId.toString())) {
+      return false;
+    }
+  }
+
+  // Check admin (if ALLOWED_ADMINS is set)
+  if (allowedAdmins) {
+    const adminList = allowedAdmins.split(',').map(a => a.trim()).filter(a => a);
+    if (adminList.length > 0 && !adminList.includes(userId.toString())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Fungsi untuk cek apakah IPv4 address termasuk private/internal
 function isPrivateIPv4(ip) {
   const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
@@ -1666,6 +1695,31 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
   }
 }
 
+// Handle /cek command - show chat and user info
+bot.onText(/^\/cek/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const chatName = msg.chat.title || msg.chat.first_name || 'Direct Chat';
+
+  const response = `
+📋 **Chat Information**
+
+**Chat ID:** \`${chatId}\`
+**Chat Name:** ${chatName}
+**Chat Type:** ${msg.chat.type}
+
+👤 **User Information**
+
+**User ID:** \`${userId}\`
+**Username:** @${msg.from.username || 'N/A'}
+**Name:** ${msg.from.first_name}${msg.from.last_name ? ' ' + msg.from.last_name : ''}
+
+ℹ️ *Gunakan IDs di atas untuk ALLOWED_GROUPS dan ALLOWED_ADMINS di .env*
+  `.trim();
+
+  await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+});
+
 // Handle URL video
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
@@ -1674,6 +1728,15 @@ bot.on('message', async (msg) => {
 
   // Skip kalau command
   if (text?.startsWith('/')) return;
+
+  // Check authorization
+  if (!isAuthorized(chatId, userId)) {
+    return bot.sendMessage(
+      chatId,
+      '❌ Bot ini restricted hanya untuk grup/admin tertentu.\n\n' +
+      'Hubungi admin bot untuk akses.'
+    );
+  }
 
   // Validasi URL dasar
   if (!text || !text.match(/^https?:\/\/.+/i)) {
