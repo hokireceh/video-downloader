@@ -1720,6 +1720,26 @@ bot.onText(/^\/cek/, async (msg) => {
   await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
 });
 
+// Handle /botid command - show bot's own ID
+bot.onText(/^\/botid/, async (msg) => {
+  try {
+    const botInfo = await bot.getMe();
+    const response = `
+🤖 **Bot Information**
+
+**Bot ID:** \`${botInfo.id}\`
+**Bot Username:** @${botInfo.username}
+**Bot Name:** ${botInfo.first_name}
+
+ℹ️ *Bot ID ini adalah ID bot kamu*
+    `.trim();
+
+    await bot.sendMessage(msg.chat.id, response, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await bot.sendMessage(msg.chat.id, `❌ Error: ${error.message}`);
+  }
+});
+
 // Handle URL video
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
