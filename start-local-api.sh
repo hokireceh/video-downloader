@@ -14,7 +14,7 @@ DATA_DIR="./data"
 TEMP_DIR="$DATA_DIR/temp"
 LOG_FILE="$DATA_DIR/telegram-bot-api.log"
 
-# Validate env
+# Validate
 if [ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
   echo "❌ TELEGRAM_API_ID & TELEGRAM_API_HASH not set!"
   exit 1
@@ -22,25 +22,29 @@ fi
 
 mkdir -p "$DATA_DIR" "$TEMP_DIR"
 
-# Check binary
+# Binary check
 if [ ! -f "./telegram-bot-api/bin/telegram-bot-api" ]; then
   echo "⚠️ Binary missing. Running setup..."
   ./setup-local-api.sh || exit 1
 fi
 
-echo "🚀 Starting Local Telegram Bot API (auto-restart enabled)"
-echo "🌐 Port: $PORT"
-echo "📝 Log: $LOG_FILE"
+echo ""
+echo "============================================"
+echo "🔗 API Mode: Local API"
+echo "🌐 Local Endpoint: http://localhost:$PORT"
+echo "📝 Log File: $LOG_FILE"
+echo "============================================"
 echo ""
 
 # Cleanup stale port
 if lsof -nti ":$PORT" >/dev/null; then
-    echo "⚠️ Port $PORT in use. Killing old process..."
     kill -9 $(lsof -t -i:$PORT) 2>/dev/null || true
     sleep 1
 fi
 
-# Loop restart
+echo "🚀 Starting Local Telegram Bot API (auto-restart enabled)..."
+
+# Loop + auto-restart
 while true; do
     ./telegram-bot-api/bin/telegram-bot-api \
         --api-id="$API_ID" \
