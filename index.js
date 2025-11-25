@@ -2303,24 +2303,34 @@ bot.on('callback_query', async (query) => {
               `          ❖ ${fileSizeMB}MB ❖\n` +
               `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-            // Kirim video
+            // Kirim video dengan extended timeout untuk large files
             let uploadSuccess = false;
             let uploadAttempts = 0;
+            const isLargeFile = result.fileSize > 100 * 1024 * 1024; // >100MB
+            const uploadTimeout = isLargeFile ? 600000 : 300000; // 10 min for large, 5 min for normal
+            
             while (!uploadSuccess && uploadAttempts < 2) {
               try {
                 uploadAttempts++;
+                console.log(`[UPLOAD] Starting upload for ${result.filename} (${(result.fileSize/1024/1024).toFixed(1)}MB) - attempt ${uploadAttempts}`);
+                
                 const ext = path.extname(result.filename).toLowerCase();
                 const mimeTypes = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv' };
                 const contentType = mimeTypes[ext] || 'video/mp4';
                 
                 const fileStream = fs.createReadStream(result.filePath);
-                await bot.sendVideo(chatId, fileStream, { caption: caption, supports_streaming: true, timeout: 300000 }, { filename: result.filename, contentType });
+                await bot.sendVideo(chatId, fileStream, { caption: caption, supports_streaming: true, timeout: uploadTimeout }, { filename: result.filename, contentType });
+                
                 uploadSuccess = true;
+                console.log(`[UPLOAD] Success: ${result.filename}`);
                 addToHistory(link, userId, result.filename, 'sent');
                 success++;
               } catch (err) {
-                console.warn(`[WARN] Upload attempt ${uploadAttempts} failed: ${err.message}`);
-                if (uploadAttempts >= 2) failed++;
+                console.error(`[ERROR] Upload attempt ${uploadAttempts} failed for ${result.filename}: ${err.message}`);
+                if (uploadAttempts >= 2) {
+                  console.error(`[ERROR] Final upload failure for ${result.filename}`);
+                  failed++;
+                }
               }
             }
 
