@@ -1642,6 +1642,8 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
         
       } catch (uploadError) {
         console.error(`[ERROR] Telegram upload failed (attempt ${uploadAttempts}): ${uploadError.message}`);
+        // Destroy stream on error to prevent memory leak
+        try { fileStream.destroy(); } catch (e) {}
         
         // Jika ini retry terakhir atau error yang tidak bisa di-retry
         if (uploadAttempts >= maxUploadRetries || 
@@ -1682,7 +1684,8 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
     }
 
     // Auto-cleanup: Hapus file setelah dikirim
-    setTimeout(() => {
+    // Use setImmediate to ensure cleanup happens promptly instead of delayed setTimeout
+    setImmediate(() => {
       try {
         if (fs.existsSync(result.filePath)) {
           fs.unlinkSync(result.filePath);
@@ -1691,7 +1694,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       } catch (cleanupError) {
         console.error(`[ERROR] Auto-cleanup failed: ${cleanupError.message}`);
       }
-    }, CONFIG.FILE_AUTO_DELETE_DELAY);
+    });
 
   } catch (error) {
     console.error(`[ERROR] Message handler error: ${error.message}`);
@@ -2169,21 +2172,38 @@ bot.on('callback_query', async (query) => {
 
           let uploadSuccess = false;
           let uploadAttempts = 0;
+          let fileStream = null;
+          
           while (!uploadSuccess && uploadAttempts < 2) {
             try {
               uploadAttempts++;
-              const fileStream = fs.createReadStream(result.filePath);
+              fileStream = fs.createReadStream(result.filePath);
               await bot.sendVideo(chatId, fileStream, { supports_streaming: true, timeout: 300000 }, { filename: result.filename, contentType });
               uploadSuccess = true;
               addToHistory(link, userId, result.filename, 'sent');
               success++;
             } catch (err) {
-              console.warn(`[WARN] Upload attempt ${uploadAttempts} failed: ${err.message}`);
-              if (uploadAttempts >= 2) failed++;
+              console.error(`[ERROR] Upload attempt ${uploadAttempts} failed: ${err.message}`);
+              // Destroy stream on error to prevent memory leak
+              try { if (fileStream) fileStream.destroy(); } catch (e) {}
+              if (uploadAttempts >= 2) {
+                console.error(`[ERROR] Upload failed after ${uploadAttempts} attempts`);
+                failed++;
+              }
             }
           }
-
-          fs.unlink(result.filePath, err => { if (err) console.warn(`[WARN] Failed to delete file: ${err.message}`); });
+          
+          // Cleanup file after upload attempt
+          setImmediate(() => {
+            try {
+              if (fs.existsSync(result.filePath)) {
+                fs.unlinkSync(result.filePath);
+                console.log(`[CLEANUP] Deleted: ${result.filename}`);
+              }
+            } catch (cleanupErr) {
+              console.error(`[ERROR] Cleanup failed: ${cleanupErr.message}`);
+            }
+          });
         } catch (error) {
           console.error(`[ERROR] Selected download error: ${error.message}`);
           failed++;
@@ -2264,6 +2284,8 @@ bot.on('callback_query', async (query) => {
                 uploadTask.onSuccess();
               } catch (err) {
                 console.error(`[ERROR] Upload attempt ${uploadAttempts} failed for ${uploadTask.filename}: ${err.message}`);
+                // Destroy stream on error to prevent memory leak
+                try { fileStream.destroy(); } catch (e) {}
                 if (uploadAttempts >= 2) {
                   console.error(`[ERROR] Final upload failure for ${uploadTask.filename} after ${uploadAttempts} attempts - marking as failed`);
                   uploadTask.onFail();
@@ -2272,7 +2294,8 @@ bot.on('callback_query', async (query) => {
             }
             
             // Cleanup file after upload completes (success or fail)
-            setTimeout(() => {
+            // Use setImmediate instead of setTimeout to ensure cleanup happens before next upload
+            setImmediate(() => {
               try {
                 if (fs.existsSync(uploadTask.filePath)) {
                   fs.unlinkSync(uploadTask.filePath);
@@ -2281,7 +2304,7 @@ bot.on('callback_query', async (query) => {
               } catch (err) {
                 console.error(`[ERROR] Cleanup failed for ${uploadTask.filename}: ${err.message}`);
               }
-            }, 5000);
+            });
             
           } catch (error) {
             console.error(`[ERROR] Upload queue processing error: ${error.message}`);
