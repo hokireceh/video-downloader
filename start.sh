@@ -35,8 +35,7 @@ echo ""
 
 # Background loop: auto-restart ngrok
 while true; do
-    ./ngrok http $API_PORT > "$NGROK_LOG" 2>&1 &
-
+    ./ngrok http $API_PORT --log=stdout --log-level=info > "$NGROK_LOG" 2>&1 &
     NGROK_PID=$!
 
     # Wait until ngrok API is ready
