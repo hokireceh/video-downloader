@@ -35,6 +35,13 @@ echo "🌐 Local Endpoint: http://localhost:$PORT"
 echo "📝 Log File: $LOG_FILE"
 echo "============================================"
 echo ""
+echo "📌 NEXT STEP (in new terminal):"
+echo "   ngrok http 8081"
+echo ""
+echo "   Then update Replit .env:"
+echo "   LOCAL_API_URL=https://xxxx-xxxx.ngrok-free.dev"
+echo "============================================"
+echo ""
 
 # Cleanup stale port
 if lsof -nti ":$PORT" >/dev/null; then
