@@ -93,12 +93,13 @@ function isAlreadyDownloaded(url, userId) {
   return history.downloads.some(entry => {
     const isMatch = entry.url === url && entry.userId === userId;
     const isRecent = (now - entry.timestamp) < HISTORY_RETENTION_MS;
-    return isMatch && isRecent;
+    const isSent = entry.status === 'sent'; // Only count as already downloaded if successfully sent
+    return isMatch && isRecent && isSent;
   });
 }
 
 // Tambah record download ke history
-function addToHistory(url, userId, filename) {
+function addToHistory(url, userId, filename, status = 'sent') {
   try {
     const history = loadHistory();
 
@@ -106,12 +107,14 @@ function addToHistory(url, userId, filename) {
       url: url,
       userId: userId,
       filename: filename,
-      timestamp: Date.now()
+      status: status, // 'sent', 'downloading', 'failed', etc
+      timestamp: Date.now(),
+      sentAt: status === 'sent' ? Date.now() : null
     });
 
     // Auto-cleanup downloads immediately after adding
     cleanupOldHistory();
-    console.log(`[HISTORY] Added download: ${filename} for user ${userId}`);
+    console.log(`[HISTORY] Added download: ${filename} for user ${userId} (status: ${status})`);
   } catch (error) {
     console.error(`[ERROR] Failed to add to download history: ${error.message}`);
   }
@@ -1623,8 +1626,9 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
 
         uploadSuccess = true;
         
-        // Simpan ke history untuk mencegah duplikasi
-        addToHistory(text, userId, result.filename);
+        // Simpan ke history LANGSUNG setelah terkirim (sebelum cleanup)
+        addToHistory(text, userId, result.filename, 'sent');
+        console.log(`[HISTORY] Video marked as sent immediately after upload success`);
 
         // Hapus pesan loading
         await bot.deleteMessage(chatId, loadingMsg.message_id);
@@ -2164,7 +2168,7 @@ bot.on('callback_query', async (query) => {
               const fileStream = fs.createReadStream(result.filePath);
               await bot.sendDocument(chatId, fileStream, { contentType }, { timeout: 300000 });
               uploadSuccess = true;
-              addToHistory(link, userId, result.filename);
+              addToHistory(link, userId, result.filename, 'sent');
               success++;
             } catch (err) {
               console.warn(`[WARN] Upload attempt ${uploadAttempts} failed: ${err.message}`);
@@ -2289,7 +2293,8 @@ bot.on('callback_query', async (query) => {
               const fileStream = fs.createReadStream(result.filePath);
               await bot.sendDocument(chatId, fileStream, { caption: caption, contentType }, { timeout: 300000 });
               uploadSuccess = true;
-              addToHistory(link, userId, result.filename);
+              addToHistory(link, userId, result.filename, 'sent');
+              success++;
             } catch (err) {
               console.warn(`[WARN] Upload attempt ${uploadAttempts} failed: ${err.message}`);
               if (uploadAttempts >= 2) console.error(`[ERROR] Failed to send video after ${uploadAttempts} attempts`);
