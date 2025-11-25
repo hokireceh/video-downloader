@@ -1,65 +1,57 @@
 #!/bin/bash
 
-# Load .env file if it exists
+set -e
+
+# Load env
 if [ -f .env ]; then
-  export $(cat .env | grep -v '^#' | grep -v '^$' | xargs)
+  export $(grep -v '^#' .env | grep -v '^$' | xargs)
 fi
 
-# Configuration
 API_ID="${TELEGRAM_API_ID}"
 API_HASH="${TELEGRAM_API_HASH}"
-LOCAL_API_PORT=8081
-LOG_FILE="./data/telegram-bot-api.log"
+PORT=8081
+DATA_DIR="./data"
+TEMP_DIR="$DATA_DIR/temp"
+LOG_FILE="$DATA_DIR/telegram-bot-api.log"
 
-# Validate env vars
+# Validate env
 if [ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
-  echo "❌ Error: TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env"
-  echo "💡 Get them from: https://my.telegram.org/apps"
+  echo "❌ TELEGRAM_API_ID & TELEGRAM_API_HASH not set!"
   exit 1
 fi
 
-# Create data directory if not exists
-mkdir -p ./data
+mkdir -p "$DATA_DIR" "$TEMP_DIR"
 
-# Check if binary exists
+# Check binary
 if [ ! -f "./telegram-bot-api/bin/telegram-bot-api" ]; then
-  echo "⚠️ Telegram Bot API Server not found. Running setup..."
-  ./setup-local-api.sh
-  
-  if [ $? -ne 0 ]; then
-    echo "❌ Setup failed!"
-    exit 1
-  fi
+  echo "⚠️ Binary missing. Running setup..."
+  ./setup-local-api.sh || exit 1
 fi
 
-# Check if port is already in use
-if lsof -Pi :$LOCAL_API_PORT -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-  echo "⚠️ Port $LOCAL_API_PORT is already in use!"
-  echo "💡 Kill existing process or change LOCAL_API_PORT"
-  exit 1
-fi
-
-# Create temp directory
-mkdir -p ./data/temp
-
-# Start Local API Server
-echo "🚀 Starting Telegram Local Bot API Server on port $LOCAL_API_PORT..."
-echo "📝 Logs: $LOG_FILE"
-echo "🔗 API Endpoint: http://localhost:$LOCAL_API_PORT"
+echo "🚀 Starting Local Telegram Bot API (auto-restart enabled)"
+echo "🌐 Port: $PORT"
+echo "📝 Log: $LOG_FILE"
 echo ""
 
-# Run with error handling
-exec ./telegram-bot-api/bin/telegram-bot-api \
-  --api-id="$API_ID" \
-  --api-hash="$API_HASH" \
-  --local \
-  --http-port=$LOCAL_API_PORT \
-  --dir=./data \
-  --temp-dir=./data/temp \
-  --log="$LOG_FILE" \
-  --verbosity=2 \
-  2>&1
+# Cleanup stale port
+if lsof -nti ":$PORT" >/dev/null; then
+    echo "⚠️ Port $PORT in use. Killing old process..."
+    kill -9 $(lsof -t -i:$PORT) 2>/dev/null || true
+    sleep 1
+fi
 
-# If we get here, something went wrong
-echo "❌ Local API Server exited unexpectedly!"
-exit 1
+# Loop restart
+while true; do
+    ./telegram-bot-api/bin/telegram-bot-api \
+        --api-id="$API_ID" \
+        --api-hash="$API_HASH" \
+        --local \
+        --http-port=$PORT \
+        --dir="$DATA_DIR" \
+        --temp-dir="$TEMP_DIR" \
+        --log="$LOG_FILE" \
+        --verbosity=1
+
+    echo "⚠️ API crashed! Restarting in 3 seconds..."
+    sleep 3
+done
