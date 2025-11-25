@@ -1617,8 +1617,9 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
         // Both Local API and Cloud API need streams, not file paths
         // Local API handles large files (up to 2GB) internally
         const fileStream = fs.createReadStream(result.filePath);
-        await bot.sendDocument(chatId, fileStream, {
-          caption: caption
+        await bot.sendVideo(chatId, fileStream, {
+          caption: caption,
+          supports_streaming: true
         }, {
           filename: result.filename,
           contentType: contentType
@@ -2166,7 +2167,7 @@ bot.on('callback_query', async (query) => {
             try {
               uploadAttempts++;
               const fileStream = fs.createReadStream(result.filePath);
-              await bot.sendDocument(chatId, fileStream, { contentType }, { timeout: 300000 });
+              await bot.sendVideo(chatId, fileStream, { supports_streaming: true, timeout: 300000 }, { filename: result.filename, contentType });
               uploadSuccess = true;
               addToHistory(link, userId, result.filename, 'sent');
               success++;
@@ -2291,7 +2292,7 @@ bot.on('callback_query', async (query) => {
               const contentType = mimeTypes[ext] || 'video/mp4';
               
               const fileStream = fs.createReadStream(result.filePath);
-              await bot.sendDocument(chatId, fileStream, { caption: caption, contentType }, { timeout: 300000 });
+              await bot.sendVideo(chatId, fileStream, { caption: caption, supports_streaming: true, timeout: 300000 }, { filename: result.filename, contentType });
               uploadSuccess = true;
               addToHistory(link, userId, result.filename, 'sent');
               success++;
