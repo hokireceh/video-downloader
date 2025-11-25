@@ -314,6 +314,8 @@ if (useLocalAPI) {
   botOptions.baseApiUrl = localAPIUrl;
   console.log(`[INFO] Using Local Bot API: ${localAPIUrl}`);
   console.log('[INFO] File size limit: Up to 2GB (Local API)');
+  console.log('[WARN] If bot fails to start, Local API might not be ready');
+  console.log('[WARN] Check ./data/api-output.log for Local API errors');
 } else {
   console.log('[INFO] Using Telegram Cloud Bot API');
   console.log('[INFO] File size limit: Up to 50MB (Cloud API)');

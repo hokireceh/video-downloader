@@ -39,13 +39,17 @@ if lsof -Pi :$LOCAL_API_PORT -sTCP:LISTEN -t >/dev/null 2>&1 ; then
   exit 1
 fi
 
+# Create temp directory
+mkdir -p ./data/temp
+
 # Start Local API Server
 echo "🚀 Starting Telegram Local Bot API Server on port $LOCAL_API_PORT..."
 echo "📝 Logs: $LOG_FILE"
 echo "🔗 API Endpoint: http://localhost:$LOCAL_API_PORT"
 echo ""
 
-./telegram-bot-api/bin/telegram-bot-api \
+# Run with error handling
+exec ./telegram-bot-api/bin/telegram-bot-api \
   --api-id="$API_ID" \
   --api-hash="$API_HASH" \
   --local \
@@ -53,4 +57,9 @@ echo ""
   --dir=./data \
   --temp-dir=./data/temp \
   --log="$LOG_FILE" \
-  --verbosity=1
+  --verbosity=2 \
+  2>&1
+
+# If we get here, something went wrong
+echo "❌ Local API Server exited unexpectedly!"
+exit 1
