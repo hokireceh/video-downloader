@@ -2219,11 +2219,15 @@ bot.on('callback_query', async (query) => {
       const MAX_CONCURRENT = 3;
       let activeDownloads = 0;
       let lastUpdate = Date.now();
+      let nextLinkIndex = 0; // Shared counter untuk queue
 
       // Process link dengan parallel queue
-      const processQueue = async (linkIndex) => {
-        while (linkIndex < links.length) {
-          const currentIndex = linkIndex++;
+      const processQueue = async () => {
+        while (true) {
+          // Get next link index (atomic)
+          const currentIndex = nextLinkIndex++;
+          if (currentIndex >= links.length) break;
+          
           const link = links[currentIndex];
 
           // Cek duplikasi - skip jika sudah pernah didownload
@@ -2361,7 +2365,7 @@ bot.on('callback_query', async (query) => {
       // Spawn 3 parallel workers
       const workers = [];
       for (let i = 0; i < MAX_CONCURRENT; i++) {
-        workers.push(processQueue(i));
+        workers.push(processQueue());
       }
 
       // Wait untuk semua workers selesai
