@@ -2202,134 +2202,170 @@ bot.on('callback_query', async (query) => {
       );
 
     } else if (data === 'download_all') {
-      // Download semua video
+      // Download semua video dengan parallel processing
       await bot.answerCallbackQuery(query.id);
       await bot.editMessageText(
-        `⏬ Memproses ${links.length} video...\n\n` +
-        `Video akan dikirim satu per satu. Mohon tunggu...`,
+        `⏬ Memproses ${links.length} video (parallel)...\n\n` +
+        `Video akan didownload & dikirim secara bersamaan. Mohon tunggu...`,
         { chat_id: chatId, message_id: messageId }
       );
 
       let success = 0;
       let failed = 0;
       let skipped = 0;
+      let processed = 0;
 
-      for (let i = 0; i < links.length; i++) {
-        try {
-          const link = links[i];
+      // Semaphore untuk concurrent downloads (max 3 concurrent)
+      const MAX_CONCURRENT = 3;
+      let activeDownloads = 0;
+      let lastUpdate = Date.now();
+
+      // Process link dengan parallel queue
+      const processQueue = async (linkIndex) => {
+        while (linkIndex < links.length) {
+          const currentIndex = linkIndex++;
+          const link = links[currentIndex];
 
           // Cek duplikasi - skip jika sudah pernah didownload
           if (isAlreadyDownloaded(link, userId)) {
-            console.log(`[INFO] Skipping ${i + 1}/${links.length}: Already downloaded (${link})`);
+            console.log(`[INFO] Skipping ${currentIndex + 1}/${links.length}: Already downloaded`);
             skipped++;
+            processed++;
+            
+            // Update progress
+            if (Date.now() - lastUpdate > 2000) {
+              await bot.editMessageText(
+                `⏬ Progress: ${processed}/${links.length} video\n\n` +
+                `✓ Berhasil: ${success}\n` +
+                `✗ Gagal: ${failed}\n` +
+                `⏭️ Dilewati: ${skipped}\n` +
+                `🔄 Active: ${activeDownloads}/${MAX_CONCURRENT}\n\n` +
+                `Sedang memproses...`,
+                { chat_id: chatId, message_id: messageId }
+              ).catch(() => {});
+              lastUpdate = Date.now();
+            }
             continue;
           }
 
-          console.log(`[INFO] Downloading ${i + 1}/${links.length}: ${link}`);
+          try {
+            activeDownloads++;
+            console.log(`[INFO] Downloading ${currentIndex + 1}/${links.length}: ${link} (active: ${activeDownloads})`);
 
-          // Update progress setiap N video
-          if (i > 0 && i % CONFIG.PROGRESS_UPDATE_INTERVAL === 0) {
-            await bot.editMessageText(
-              `⏬ Progress: ${i}/${links.length} video\n\n` +
-              `✓ Berhasil: ${success}\n` +
-              `✗ Gagal: ${failed}\n` +
-              `⏭️ Dilewati (duplikat): ${skipped}\n\n` +
-              `Masih memproses...`,
-              { chat_id: chatId, message_id: messageId }
-            ).catch(() => {}); // Ignore edit errors
-          }
+            // Check if link is already a direct video URL
+            const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp'];
+            const urlPath = new URL(link).pathname.toLowerCase();
+            const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext));
 
-          // Check if link is already a direct video URL
-          const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp'];
-          const urlPath = new URL(link).pathname.toLowerCase();
-          const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext));
+            let videoUrl;
+            if (isDirectVideoLink) {
+              videoUrl = link;
+            } else {
+              const extractResult = await Promise.race([
+                extractVideoFromHTML(link),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), CONFIG.SCRAPE_TIMEOUT))
+              ]).catch(err => ({ success: false, error: err.message }));
 
-          let videoUrl;
-          if (isDirectVideoLink) {
-            // Already a direct video URL, skip extraction
-            console.log(`[INFO] Direct video URL detected, skipping extraction`);
-            videoUrl = link;
-          } else {
-            // Need to extract video URL from HTML page
-            const extractResult = await Promise.race([
-              extractVideoFromHTML(link),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), CONFIG.SCRAPE_TIMEOUT))
+              if (!extractResult.success) {
+                console.warn(`[WARN] Failed to extract video from ${link}: ${extractResult.error}`);
+                failed++;
+                processed++;
+                activeDownloads--;
+                continue;
+              }
+              videoUrl = extractResult.videoUrl;
+            }
+
+            // Download video
+            const result = await Promise.race([
+              downloadVideo(videoUrl, chatId),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Download timeout')), CONFIG.DOWNLOAD_TIMEOUT))
             ]).catch(err => ({ success: false, error: err.message }));
 
-            if (!extractResult.success) {
-              console.warn(`[WARN] Failed to extract video from ${link}: ${extractResult.error}`);
+            if (!result.success) {
+              console.warn(`[WARN] Failed to download ${link}: ${result.error}`);
               failed++;
+              processed++;
+              activeDownloads--;
               continue;
             }
 
-            videoUrl = extractResult.videoUrl;
-          }
+            // Format caption
+            const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
+            const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
+            const caption = 
+              `▬▬▬▬▬ ${currentIndex + 1}/${links.length} ▬▬▬▬▬\n` +
+              ` ${filenameCleaned} \n\n` +
+              `          ❖ ${fileSizeMB}MB ❖\n` +
+              `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-          // Download video
-          const result = await Promise.race([
-            downloadVideo(videoUrl, chatId),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Download timeout')), CONFIG.DOWNLOAD_TIMEOUT))
-          ]).catch(err => ({ success: false, error: err.message }));
-
-          if (!result.success) {
-            console.warn(`[WARN] Failed to download ${link}: ${result.error}`);
-            failed++;
-            continue;
-          }
-
-          // Format caption yang lebih rapi
-          const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
-          const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
-
-          const caption = 
-            `▬▬▬▬▬ ${i + 1}/${links.length} ▬▬▬▬▬\n` +
-            ` ${filenameCleaned} \n\n` +
-            `          ❖ ${fileSizeMB}MB ❖\n` +
-            `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
-
-          // Kirim video (use file stream like multi-select - proven working approach)
-          let uploadSuccess = false;
-          let uploadAttempts = 0;
-          while (!uploadSuccess && uploadAttempts < 2) {
-            try {
-              uploadAttempts++;
-              const ext = path.extname(result.filename).toLowerCase();
-              const mimeTypes = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv' };
-              const contentType = mimeTypes[ext] || 'video/mp4';
-              
-              const fileStream = fs.createReadStream(result.filePath);
-              await bot.sendVideo(chatId, fileStream, { caption: caption, supports_streaming: true, timeout: 300000 }, { filename: result.filename, contentType });
-              uploadSuccess = true;
-              addToHistory(link, userId, result.filename, 'sent');
-              success++;
-            } catch (err) {
-              console.warn(`[WARN] Upload attempt ${uploadAttempts} failed: ${err.message}`);
-              if (uploadAttempts >= 2) console.error(`[ERROR] Failed to send video after ${uploadAttempts} attempts`);
-            }
-          }
-
-          // Auto-cleanup
-          setTimeout(() => {
-            try {
-              if (fs.existsSync(result.filePath)) {
-                fs.unlinkSync(result.filePath);
-                console.log(`[CLEANUP] Deleted: ${result.filename}`);
+            // Kirim video
+            let uploadSuccess = false;
+            let uploadAttempts = 0;
+            while (!uploadSuccess && uploadAttempts < 2) {
+              try {
+                uploadAttempts++;
+                const ext = path.extname(result.filename).toLowerCase();
+                const mimeTypes = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv' };
+                const contentType = mimeTypes[ext] || 'video/mp4';
+                
+                const fileStream = fs.createReadStream(result.filePath);
+                await bot.sendVideo(chatId, fileStream, { caption: caption, supports_streaming: true, timeout: 300000 }, { filename: result.filename, contentType });
+                uploadSuccess = true;
+                addToHistory(link, userId, result.filename, 'sent');
+                success++;
+              } catch (err) {
+                console.warn(`[WARN] Upload attempt ${uploadAttempts} failed: ${err.message}`);
+                if (uploadAttempts >= 2) failed++;
               }
-            } catch (err) {
-              console.error(`[ERROR] Cleanup failed: ${err.message}`);
             }
-          }, CONFIG.FILE_AUTO_DELETE_DELAY);
 
-          success++;
+            // Auto-cleanup
+            setTimeout(() => {
+              try {
+                if (fs.existsSync(result.filePath)) {
+                  fs.unlinkSync(result.filePath);
+                  console.log(`[CLEANUP] Deleted: ${result.filename}`);
+                }
+              } catch (err) {
+                console.error(`[ERROR] Cleanup failed: ${err.message}`);
+              }
+            }, CONFIG.FILE_AUTO_DELETE_DELAY);
 
-          // Small delay untuk menghindari flood
-          await new Promise(resolve => setTimeout(resolve, CONFIG.BATCH_DOWNLOAD_DELAY));
+            processed++;
+            activeDownloads--;
+            
+            // Update progress
+            if (Date.now() - lastUpdate > 2000) {
+              await bot.editMessageText(
+                `⏬ Progress: ${processed}/${links.length} video\n\n` +
+                `✓ Berhasil: ${success}\n` +
+                `✗ Gagal: ${failed}\n` +
+                `⏭️ Dilewati: ${skipped}\n` +
+                `🔄 Active: ${activeDownloads}/${MAX_CONCURRENT}\n\n` +
+                `Sedang memproses...`,
+                { chat_id: chatId, message_id: messageId }
+              ).catch(() => {});
+              lastUpdate = Date.now();
+            }
 
-        } catch (error) {
-          console.error(`[ERROR] Error processing link ${i + 1}: ${error.message}`);
-          failed++;
+          } catch (error) {
+            console.error(`[ERROR] Error processing link ${currentIndex + 1}: ${error.message}`);
+            failed++;
+            processed++;
+            activeDownloads--;
+          }
         }
+      };
+
+      // Spawn 3 parallel workers
+      const workers = [];
+      for (let i = 0; i < MAX_CONCURRENT; i++) {
+        workers.push(processQueue(i));
       }
+
+      // Wait untuk semua workers selesai
+      await Promise.all(workers);
 
       // Hapus message progress
       await bot.deleteMessage(chatId, messageId).catch(() => {});
