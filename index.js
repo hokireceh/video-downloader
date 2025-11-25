@@ -102,18 +102,24 @@ function isAlreadyDownloaded(url, userId) {
 function addToHistory(url, userId, filename, status = 'sent') {
   try {
     const history = loadHistory();
+    const now = Date.now();
 
     history.downloads.push({
       url: url,
       userId: userId,
       filename: filename,
       status: status, // 'sent', 'downloading', 'failed', etc
-      timestamp: Date.now(),
-      sentAt: status === 'sent' ? Date.now() : null
+      timestamp: now,
+      sentAt: status === 'sent' ? now : null
     });
 
-    // Auto-cleanup downloads immediately after adding
-    cleanupOldHistory();
+    // Cleanup old downloads langsung dalam function ini (avoid race condition)
+    history.downloads = history.downloads.filter(entry => {
+      return (now - entry.timestamp) < HISTORY_RETENTION_MS;
+    });
+
+    // Save ke file sekali saja
+    saveHistory(history);
     console.log(`[HISTORY] Added download: ${filename} for user ${userId} (status: ${status})`);
   } catch (error) {
     console.error(`[ERROR] Failed to add to download history: ${error.message}`);
