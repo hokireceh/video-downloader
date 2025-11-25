@@ -2217,15 +2217,13 @@ bot.on('callback_query', async (query) => {
 
       // Semaphore untuk concurrent downloads (max 3 concurrent)
       const MAX_CONCURRENT = 3;
-      const MAX_CONCURRENT_UPLOADS = 1; // Sequential upload untuk avoid large file bottleneck
       let activeDownloads = 0;
-      let activeUploads = 0;
       let lastUpdate = Date.now();
       let nextLinkIndex = 0; // Shared counter untuk queue
-      let uploadQueue = []; // Queue untuk large file uploads
+      let uploadQueue = []; // Queue untuk ALL uploads (sequential)
       let uploadProcessing = false;
 
-      // Process upload queue untuk large files
+      // Process upload queue - SEQUENTIAL upload para sa lahat
       const processUploadQueue = async () => {
         if (uploadProcessing || uploadQueue.length === 0) return;
         uploadProcessing = true;
@@ -2233,9 +2231,16 @@ bot.on('callback_query', async (query) => {
         while (uploadQueue.length > 0) {
           const uploadTask = uploadQueue.shift();
           try {
-            activeUploads++;
             const uploadStartTime = Date.now();
-            console.log(`[UPLOAD] Starting upload for ${uploadTask.filename} (${(uploadTask.fileSize/1024/1024).toFixed(1)}MB) - from queue`);
+            const isLarge = uploadTask.fileSize > 100 * 1024 * 1024;
+            console.log(`[UPLOAD] Starting upload for ${uploadTask.filename} (${(uploadTask.fileSize/1024/1024).toFixed(1)}MB)${isLarge ? ' [LARGE]' : ''} - from queue`);
+            
+            // Double-check file exists
+            if (!fs.existsSync(uploadTask.filePath)) {
+              console.error(`[ERROR] File missing before upload: ${uploadTask.filePath} - skipping`);
+              uploadTask.onFail();
+              continue;
+            }
             
             let uploadSuccess = false;
             let uploadAttempts = 0;
@@ -2243,6 +2248,12 @@ bot.on('callback_query', async (query) => {
             while (!uploadSuccess && uploadAttempts < 2) {
               try {
                 uploadAttempts++;
+                
+                // Use fs.existsSync to verify file still exists before streaming
+                if (!fs.existsSync(uploadTask.filePath)) {
+                  throw new Error(`File was deleted before upload attempt ${uploadAttempts}`);
+                }
+                
                 const fileStream = fs.createReadStream(uploadTask.filePath);
                 await bot.sendVideo(chatId, fileStream, { caption: uploadTask.caption, supports_streaming: true, timeout: uploadTask.uploadTimeout }, { filename: uploadTask.filename, contentType: uploadTask.contentType });
                 
@@ -2254,13 +2265,13 @@ bot.on('callback_query', async (query) => {
               } catch (err) {
                 console.error(`[ERROR] Upload attempt ${uploadAttempts} failed for ${uploadTask.filename}: ${err.message}`);
                 if (uploadAttempts >= 2) {
-                  console.error(`[ERROR] Final upload failure for ${uploadTask.filename} after ${uploadAttempts} attempts`);
+                  console.error(`[ERROR] Final upload failure for ${uploadTask.filename} after ${uploadAttempts} attempts - marking as failed`);
                   uploadTask.onFail();
                 }
               }
             }
             
-            // Cleanup file after successful upload
+            // Cleanup file after upload completes (success or fail)
             setTimeout(() => {
               try {
                 if (fs.existsSync(uploadTask.filePath)) {
@@ -2270,13 +2281,11 @@ bot.on('callback_query', async (query) => {
               } catch (err) {
                 console.error(`[ERROR] Cleanup failed for ${uploadTask.filename}: ${err.message}`);
               }
-            }, 5000); // Small delay before cleanup
+            }, 5000);
             
           } catch (error) {
             console.error(`[ERROR] Upload queue processing error: ${error.message}`);
             uploadTask.onFail();
-          } finally {
-            activeUploads--;
           }
         }
         uploadProcessing = false;
@@ -2364,93 +2373,33 @@ bot.on('callback_query', async (query) => {
               `          ❖ ${fileSizeMB}MB ❖\n` +
               `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-            // Kirim video dengan extended timeout untuk large files
-            const isLargeFile = result.fileSize > 100 * 1024 * 1024; // >100MB
-            const uploadTimeout = isLargeFile ? 600000 : 300000; // 10 min for large, 5 min for normal
+            // Prepare upload task
+            const uploadTimeout = result.fileSize > 100 * 1024 * 1024 ? 600000 : 300000; // 10 min for large, 5 min for normal
             const ext = path.extname(result.filename).toLowerCase();
             const mimeTypes = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv' };
             const contentType = mimeTypes[ext] || 'video/mp4';
             
-            // Queue large files untuk sequential upload, small files langsung
-            if (isLargeFile) {
-              // Queue untuk sequential processing
-              uploadQueue.push({
-                filename: result.filename,
-                filePath: result.filePath,
-                fileSize: result.fileSize,
-                link: link,
-                caption: caption,
-                uploadTimeout: uploadTimeout,
-                contentType: contentType,
-                onSuccess: () => {
-                  success++;
-                },
-                onFail: () => {
-                  failed++;
-                  // Cleanup file on failure
-                  try {
-                    if (fs.existsSync(result.filePath)) {
-                      fs.unlinkSync(result.filePath);
-                      console.log(`[CLEANUP] Deleted (failed): ${result.filename}`);
-                    }
-                  } catch (err) {
-                    console.error(`[ERROR] Failed to cleanup ${result.filename}: ${err.message}`);
-                  }
-                }
-              });
-              console.log(`[QUEUE] Large file queued: ${result.filename} (queue length: ${uploadQueue.length})`);
-              
-              // Trigger queue processing
-              setImmediate(() => processUploadQueue());
-            } else {
-              // Small files - upload immediately
-              let uploadSuccess = false;
-              let uploadAttempts = 0;
-              
-              while (!uploadSuccess && uploadAttempts < 2) {
-                try {
-                  uploadAttempts++;
-                  console.log(`[UPLOAD] Starting upload for ${result.filename} (${(result.fileSize/1024/1024).toFixed(1)}MB) - attempt ${uploadAttempts}`);
-                  
-                  const fileStream = fs.createReadStream(result.filePath);
-                  await bot.sendVideo(chatId, fileStream, { caption: caption, supports_streaming: true, timeout: uploadTimeout }, { filename: result.filename, contentType });
-                  
-                  uploadSuccess = true;
-                  console.log(`[UPLOAD] Success: ${result.filename}`);
-                  addToHistory(link, userId, result.filename, 'sent');
-                  success++;
-                  
-                  // Cleanup file after successful upload
-                  setTimeout(() => {
-                    try {
-                      if (fs.existsSync(result.filePath)) {
-                        fs.unlinkSync(result.filePath);
-                        console.log(`[CLEANUP] Deleted: ${result.filename}`);
-                      }
-                    } catch (err) {
-                      console.error(`[ERROR] Cleanup failed: ${err.message}`);
-                    }
-                  }, 5000);
-                  
-                } catch (err) {
-                  console.error(`[ERROR] Upload attempt ${uploadAttempts} failed for ${result.filename}: ${err.message}`);
-                  if (uploadAttempts >= 2) {
-                    console.error(`[ERROR] Final upload failure for ${result.filename} after ${uploadAttempts} attempts`);
-                    failed++;
-                    
-                    // Cleanup on failure
-                    try {
-                      if (fs.existsSync(result.filePath)) {
-                        fs.unlinkSync(result.filePath);
-                        console.log(`[CLEANUP] Deleted (failed): ${result.filename}`);
-                      }
-                    } catch (cleanupErr) {
-                      console.error(`[ERROR] Failed to cleanup ${result.filename}: ${cleanupErr.message}`);
-                    }
-                  }
-                }
+            // Queue ALL uploads untuk true sequential processing (avoid parallel upload bottleneck)
+            uploadQueue.push({
+              filename: result.filename,
+              filePath: result.filePath,
+              fileSize: result.fileSize,
+              link: link,
+              caption: caption,
+              uploadTimeout: uploadTimeout,
+              contentType: contentType,
+              onSuccess: () => {
+                success++;
+              },
+              onFail: () => {
+                failed++;
               }
-            }
+            });
+            
+            console.log(`[QUEUE] File queued: ${result.filename} (queue length: ${uploadQueue.length})`);
+            
+            // Trigger sequential queue processing
+            setImmediate(() => processUploadQueue());
 
             processed++;
             activeDownloads--;
