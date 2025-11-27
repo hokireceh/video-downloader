@@ -321,6 +321,9 @@ const localAPIUrl = process.env.LOCAL_API_URL || 'http://localhost:8081';
 
 if (useLocalAPI) {
   botOptions.baseApiUrl = localAPIUrl;
+  botOptions.request = {
+    rejectUnauthorized: false  // Disable SSL verification for reverse proxy (development)
+  };
   console.log(`[INFO] Using Local Bot API: ${localAPIUrl}`);
   console.log('[INFO] File size limit: Up to 2GB (Local API)');
   console.log('[WARN] If bot fails to start, Local API might not be ready');
