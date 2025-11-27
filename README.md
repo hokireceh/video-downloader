@@ -140,18 +140,20 @@ chmod +x start-all.sh
 
 ---
 
-## 🚀 Deployment on Replit (Production)
+## 🚀 Deployment
+
+### Option A: Replit (Cloud - Recommended for Beginners)
 
 Bot ini sudah dikonfigurasi untuk deploy di Replit. Ikuti langkah berikut:
 
-### 1. Import Project ke Replit
+#### 1. Import Project ke Replit
 
 - Kunjungi [Replit](https://replit.com)
 - Klik "Import from GitHub"
 - Paste URL repository: `https://github.com/hokireceh/video-downloader.git`
 - Klik Import
 
-### 2. Set Bot Token
+#### 2. Set Bot Token
 
 1. Buka tab **Secrets** di Replit (tombol gembok di sidebar)
 2. Buat secret baru:
@@ -159,12 +161,12 @@ Bot ini sudah dikonfigurasi untuk deploy di Replit. Ikuti langkah berikut:
    - Value: `your_telegram_bot_token_from_botfather`
 3. Klik Save
 
-### 3. Run Bot
+#### 3. Run Bot
 
 1. Klik tombol **Run** di Replit
 2. Bot akan auto-start dan siap menerima perintah
 
-### 4. Bot Configuration (Optional)
+#### 4. Bot Configuration (Optional)
 
 Jika ingin menyesuaikan folder download atau ukuran file:
 
@@ -175,10 +177,80 @@ Jika ingin menyesuaikan folder download atau ukuran file:
    MAX_FILE_SIZE=50000000
    ```
 
-### ✅ Bot akan tetap running 24/7 di Replit dengan:
+#### ✅ Bot akan tetap running 24/7 di Replit dengan:
 - Auto-restart on crash
 - Persistent storage di `data/data.json`
 - Auto-cleanup untuk manage resources
+
+---
+
+### Option B: Ubuntu Server + Local Bot API (Production - 2GB File Support)
+
+Deploy bot dengan Local Bot API untuk support file hingga 2GB. Setup melibatkan:
+- **Local Bot API**: Binary compiled pada Ubuntu, running di port 9090
+- **Apache Reverse Proxy**: Forward requests ke Local Bot API  
+- **Systemd Service**: Auto-restart on crash dan reboot
+- **Custom Domain**: Point ke server dengan SSL
+
+#### Prerequisites
+- Ubuntu 24.04+ server
+- Docker atau native compilation environment untuk Telegram Bot API
+- Apache webserver installed
+- Custom domain dengan DNS management
+
+#### Architecture Overview
+```
+Replit Bot ─(HTTPS)─> Custom Domain ─(Apache 8081)─> Localhost:9090 (Local Bot API)
+```
+
+#### Setup Steps (Command Line)
+
+1. **Compile Telegram Bot API** (if not already done):
+   ```bash
+   # This requires build tools and boost libraries
+   # Estimated time: 30-60 minutes
+   ```
+
+2. **Create systemd service** untuk auto-start:
+   - File: `/etc/systemd/system/telegram-bot-api.service`
+   - Ensures Local Bot API starts automatically on server reboot
+   - Auto-restarts if process crashes
+
+3. **Setup Apache Reverse Proxy**:
+   - Configure VirtualHost untuk custom domain
+   - Proxy requests dari port 8081 → port 9090 (Local Bot API)
+
+4. **Configure Replit Bot**:
+   - Set environment: `USE_LOCAL_API=true`
+   - Set: `LOCAL_API_URL=https://your-custom-domain.com`
+   - Disable SSL validation untuk self-signed certificates
+
+#### Benefits
+✅ Support file hingga 2GB (vs 50MB cloud API)  
+✅ Persistent local storage  
+✅ No Telegram cloud upload latency  
+✅ Auto-restart capabilities  
+
+#### Monitoring
+Check service status:
+```bash
+sudo systemctl status telegram-bot-api
+sudo journalctl -u telegram-bot-api -n 50 --no-pager
+```
+
+---
+
+## ⚙️ Environment Variables (Production)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BOT_TOKEN` | ✅ | - | Telegram bot token (from @BotFather) |
+| `USE_LOCAL_API` | ❌ | false | Enable Local Bot API mode |
+| `LOCAL_API_URL` | ❌ | http://localhost:8081 | Local Bot API endpoint |
+| `DOWNLOAD_FOLDER` | ❌ | ./downloads | Video storage directory |
+| `MAX_FILE_SIZE` | ❌ | 50000000 | Max file size in bytes |
+
+**Security Note**: Never commit credentials to git. Use environment variables or secrets manager.
 
 ---
 
