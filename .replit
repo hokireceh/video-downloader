@@ -28,4 +28,9 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["cmake", "speedtest-cli"]
+packages = ["cmake", "speedtest-cli", "wget"]
+
+[userenv]
+
+[userenv.shared]
+LOCAL_API_URL = "https://api.bukitcuan.fun"
