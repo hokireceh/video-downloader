@@ -483,7 +483,7 @@ Jika bot ini bermanfaat, dukung development dengan donasi:
 
 ### ⚡ USD BNB ETH HYPE XPL (EVM Networks)
 ```
-0x77bFeEa5Dd20C4Cf3B716A7CEf39E29897797aEC
+0xbE0bff0121f17EE0EC1F08976f936d714202face
 ```
 
 ---
