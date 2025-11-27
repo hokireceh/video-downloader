@@ -33,4 +33,4 @@ packages = ["cmake", "speedtest-cli", "wget"]
 [userenv]
 
 [userenv.shared]
-LOCAL_API_URL = "https://impressive-miles-lease-marking.trycloudflare.com"
+LOCAL_API_URL = "https://api.bukitcuan.fun"
