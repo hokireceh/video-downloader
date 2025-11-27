@@ -2677,7 +2677,7 @@ bot.on('polling_error', (error) => {
   console.error(`[ERROR] Polling error: ${error.code || error.message}`);
 
   // Jangan crash bot untuk error umum
-  if (error.code === 'EFATAL' || error.code === 'ETELEGRAM') {
+  if (error.code === 'EFATAL' || error.code === 'ETELEGRAM' || error.code === 'EPARSE') {
     pollingErrorCount++;
     console.error(`[FATAL] Fatal polling error (${pollingErrorCount}/${MAX_POLLING_ERRORS})`);
     
