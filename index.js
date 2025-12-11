@@ -2492,14 +2492,15 @@ bot.on('callback_query', async (query) => {
           const isDirectVideoLink = videoExtensions.some(ext => cleanPath.endsWith(ext));
 
           let videoUrl;
+          let pageTitle = null;  // Store page title for filename (declare outside to use in all branches)
           if (isDirectVideoLink) {
             // Already a direct video URL, skip extraction
             console.log(`[INFO] Direct video URL detected for selected video ${i + 1}, skipping extraction`);
             videoUrl = link;
+            // pageTitle remains null for direct URLs
           } else {
             // Need to extract video URL from HTML page or handle M3U8
             // Try to download and check content-type first
-            let pageTitle = null;  // Store page title for filename
             try {
               const headResponse = await axios({
                 url: link,
