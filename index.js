@@ -1143,6 +1143,142 @@ async function parseM3U8Playlist(url, baseUrl = null, isNestedLevel = false) {
   }
 }
 
+// Fungsi untuk download dan concatenate semua HLS segments
+async function downloadHLSSegments(segmentUrls, chatId) {
+  if (!segmentUrls || segmentUrls.length === 0) {
+    return { success: false, error: 'No segments to download' };
+  }
+
+  const segmentFolder = path.join(CONFIG.DOWNLOAD_FOLDER, `segments_${Date.now()}`);
+  let filePath = null;
+
+  try {
+    // Create temporary folder untuk segments
+    if (!fs.existsSync(segmentFolder)) {
+      fs.mkdirSync(segmentFolder, { recursive: true });
+    }
+
+    console.log(`[HLS] Downloading ${segmentUrls.length} segments...`);
+    
+    // Download semua segments
+    const downloadedSegments = [];
+    for (let i = 0; i < segmentUrls.length; i++) {
+      const segmentUrl = segmentUrls[i];
+      const segmentPath = path.join(segmentFolder, `seg_${String(i).padStart(4, '0')}.ts`);
+
+      try {
+        console.log(`[HLS] Downloading segment ${i + 1}/${segmentUrls.length}`);
+        
+        const response = await axios({
+          url: segmentUrl,
+          method: 'GET',
+          responseType: 'stream',
+          timeout: 30000,
+          maxRedirects: 3,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+
+        await new Promise((resolve, reject) => {
+          const writer = fs.createWriteStream(segmentPath);
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+
+        downloadedSegments.push(segmentPath);
+        
+        // Progress setiap 10%
+        if ((i + 1) % Math.max(1, Math.floor(segmentUrls.length / 10)) === 0) {
+          console.log(`[HLS] Progress: ${Math.floor((i + 1) / segmentUrls.length * 100)}%`);
+        }
+      } catch (err) {
+        console.warn(`[WARN] Failed to download segment ${i + 1}: ${err.message}`);
+        // Continue dengan segment berikutnya
+      }
+    }
+
+    if (downloadedSegments.length === 0) {
+      throw new Error('No segments downloaded successfully');
+    }
+
+    console.log(`[HLS] Downloaded ${downloadedSegments.length} segments, concatenating...`);
+
+    // Concatenate segments jadi satu file
+    filePath = path.join(CONFIG.DOWNLOAD_FOLDER, `video_${Date.now()}.mp4`);
+    
+    // Buka file output untuk write
+    const outputStream = fs.createWriteStream(filePath);
+    
+    // Write segments sequentially
+    for (const segmentPath of downloadedSegments) {
+      const data = fs.readFileSync(segmentPath);
+      outputStream.write(data);
+    }
+    
+    outputStream.end();
+
+    return new Promise((resolve) => {
+      outputStream.on('finish', () => {
+        try {
+          const stats = fs.statSync(filePath);
+          const fileSize = stats.size;
+          const filename = path.basename(filePath);
+
+          console.log(`[HLS] Concatenation complete: ${filename} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
+
+          // Cleanup segments folder
+          downloadedSegments.forEach(segPath => {
+            try {
+              fs.unlinkSync(segPath);
+            } catch (e) {}
+          });
+          fs.rmdirSync(segmentFolder);
+
+          resolve({
+            success: true,
+            filePath: filePath,
+            filename: filename,
+            fileSize: fileSize
+          });
+        } catch (err) {
+          resolve({
+            success: false,
+            error: `Concatenation failed: ${err.message}`
+          });
+        }
+      });
+
+      outputStream.on('error', (err) => {
+        resolve({
+          success: false,
+          error: `Write error: ${err.message}`
+        });
+      });
+    });
+  } catch (error) {
+    console.error(`[ERROR] HLS download failed: ${error.message}`);
+    
+    // Cleanup
+    try {
+      if (filePath && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      if (fs.existsSync(segmentFolder)) {
+        const files = fs.readdirSync(segmentFolder);
+        files.forEach(f => fs.unlinkSync(path.join(segmentFolder, f)));
+        fs.rmdirSync(segmentFolder);
+      }
+    } catch (e) {}
+
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 // Fungsi download video
 async function downloadVideo(url, chatId) {
   let filePath = null;
@@ -1197,9 +1333,15 @@ async function downloadVideo(url, chatId) {
         };
       }
 
-      // Download video segment pertama (biasanya kualitas terbaik atau cukup representative)
-      console.log(`[M3U8] Downloading first video segment of ${playlistResult.videoUrls.length} segments`);
-      return downloadVideo(playlistResult.videoUrls[0], chatId);
+      // Download semua segments dan concatenate
+      if (playlistResult.videoUrls.length > 1) {
+        console.log(`[M3U8] Downloading and concatenating ${playlistResult.videoUrls.length} segments...`);
+        return downloadHLSSegments(playlistResult.videoUrls, chatId);
+      } else {
+        // Single segment, download langsung
+        console.log(`[M3U8] Downloading single video segment`);
+        return downloadVideo(playlistResult.videoUrls[0], chatId);
+      }
     }
 
     // Cek apakah response adalah HTML (halaman web), bukan video
