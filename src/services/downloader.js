@@ -466,7 +466,8 @@ async function uploadVideoToTelegram(bot, chatId, filePath, filename, options = 
       const fileSize = fs.statSync(filePath).size;
       console.log(`[UPLOAD] Starting upload: ${filename} (${(fileSize/1024/1024).toFixed(2)}MB)`);
       
-      await bot.sendVideo(chatId, filePath, {
+      const fileStream = fs.createReadStream(filePath);
+      await bot.sendVideo(chatId, fileStream, {
         caption: caption,
         supports_streaming: true
       }, {

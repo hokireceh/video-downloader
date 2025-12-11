@@ -28,10 +28,10 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["cmake", "speedtest-cli", "wget", "nano"]
+packages = ["cmake", "speedtest-cli", "wget", "nano", "tree"]
 
 [userenv]
 
 [userenv.shared]
-LOCAL_API_URL = "http://api.bukitcuan.fun"
+LOCAL_API_URL = "http://api.bukitcuan.fun:8081"
 NTBA_FIX_350 = "1"
