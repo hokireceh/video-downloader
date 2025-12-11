@@ -1297,7 +1297,7 @@ async function uploadVideoToTelegram(chatId, filePath, filename, options = {}) {
     caption = '',
     onRetry = null,
     onFail = null,
-    maxRetries = 2
+    maxRetries = 3  // Increased for large files
   } = options;
 
   // Detect MIME type
@@ -1320,12 +1320,19 @@ async function uploadVideoToTelegram(chatId, filePath, filename, options = {}) {
         if (onRetry) await onRetry(uploadAttempts, maxRetries);
       }
       
-      // Create stream dan upload
-      const fileStream = fs.createReadStream(filePath);
-      await bot.sendVideo(chatId, fileStream, {
+      // Verify file exists before upload
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+      
+      const fileSize = fs.statSync(filePath).size;
+      console.log(`[UPLOAD] Starting upload: ${filename} (${(fileSize/1024/1024).toFixed(2)}MB)`);
+      
+      // Use file path directly (library handles streaming internally)
+      // This is more reliable for large files according to node-telegram-bot-api docs
+      await bot.sendVideo(chatId, filePath, {
         caption: caption,
-        supports_streaming: true,
-        timeout: 300000
+        supports_streaming: true
       }, {
         filename: filename,
         contentType: contentType
@@ -1336,7 +1343,14 @@ async function uploadVideoToTelegram(chatId, filePath, filename, options = {}) {
       
     } catch (err) {
       console.error(`[ERROR] Upload attempt ${uploadAttempts}/${maxRetries} failed: ${err.message}`);
-      try { fileStream.destroy(); } catch (e) {}
+      
+      // Log more details for EPARSE errors
+      if (err.code === 'EPARSE') {
+        console.error(`[ERROR] EPARSE - Response could not be parsed. Local API may have issues.`);
+        if (err.response && err.response.body) {
+          console.error(`[ERROR] Response body: ${typeof err.response.body === 'string' ? err.response.body.substring(0, 500) : JSON.stringify(err.response.body)}`);
+        }
+      }
       
       // Check if retryable
       const isRetryable = !err.message.includes('file is too big') && 
@@ -1344,8 +1358,10 @@ async function uploadVideoToTelegram(chatId, filePath, filename, options = {}) {
                          uploadAttempts < maxRetries;
       
       if (isRetryable) {
-        // Exponential backoff: 2s, 4s
-        await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
+        // Longer backoff for large files: 3s, 6s, 9s
+        const waitTime = 3000 * uploadAttempts;
+        console.log(`[RETRY] Waiting ${waitTime/1000}s before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         console.error(`[ERROR] Upload failed - not retryable`);
         if (onFail) await onFail(err.message);
