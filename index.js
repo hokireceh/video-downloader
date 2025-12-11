@@ -15,7 +15,7 @@ const {
   generatePaginationKeyboard, getPageInfo, startFileCleanupInterval, startMemoryCleanupInterval
 } = require('./src/utils/helpers');
 const { extractVideoLinksFromPage, extractVideoFromHTML, parseM3U8Playlist } = require('./src/services/scraper');
-const { downloadVideo, downloadHLSSegments, uploadVideoToTelegram } = require('./src/services/downloader');
+const { downloadVideo, downloadHLSSegments, uploadVideoToTelegram, checkContentType } = require('./src/services/downloader');
 
 validateEnvironment();
 
@@ -259,6 +259,8 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       return;
     }
 
+    let extractResult = null;
+
     if (!isDirectLink) {
       await bot.editMessageText(
         '🔍 Mencari video di halaman...',
@@ -298,7 +300,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
         return;
       }
 
-      const extractResult = await extractVideoFromHTML(text);
+      extractResult = await extractVideoFromHTML(text);
 
       if (!extractResult.success) {
         await bot.editMessageText(
@@ -354,7 +356,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       );
     }
 
-    const result = await downloadVideo(videoUrl, chatId);
+    const result = await downloadVideo(videoUrl, chatId, extractResult?.pageTitle || null);
 
     if (!result.success) {
       await bot.editMessageText(
@@ -675,8 +677,14 @@ bot.on('callback_query', async (query) => {
           const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext)) || urlPath.includes('/get_file/');
 
           let videoUrl;
+          let pageTitle = null;
+          
           if (isDirectVideoLink) {
             videoUrl = link;
+            const contentCheck = await checkContentType(link);
+            if (contentCheck.success && contentCheck.isM3U8) {
+              console.log(`[INFO] Direct link is M3U8, will be handled by downloader`);
+            }
           } else {
             const extractResult = await extractVideoFromHTML(link);
             if (!extractResult.success) {
@@ -684,15 +692,18 @@ bot.on('callback_query', async (query) => {
               continue;
             }
             videoUrl = extractResult.videoUrl;
+            pageTitle = extractResult.pageTitle;
           }
 
-          const result = await downloadVideo(videoUrl, chatId);
+          const result = await downloadVideo(videoUrl, chatId, pageTitle);
           if (!result.success) {
             failed++;
             continue;
           }
 
-          const caption = `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`;
+          const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
+          const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
+          const caption = `▬▬▬▬▬▬▬▬▬▬▬▬▬\n${filenameCleaned}\n\n          ❖ ${fileSizeMB}MB ❖\n▬▬▬▬▬▬▬▬▬▬▬▬▬`;
           const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, { caption });
 
           if (uploadResult.success) {
@@ -762,8 +773,14 @@ bot.on('callback_query', async (query) => {
             const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext)) || urlPath.includes('/get_file/');
 
             let videoUrl;
+            let pageTitle = null;
+            
             if (isDirectVideoLink) {
               videoUrl = link;
+              const contentCheck = await checkContentType(link);
+              if (contentCheck.success && contentCheck.isM3U8) {
+                console.log(`[INFO] Direct link is M3U8, will be handled by downloader`);
+              }
             } else {
               const extractResult = await extractVideoFromHTML(link);
               if (!extractResult.success) {
@@ -772,16 +789,19 @@ bot.on('callback_query', async (query) => {
                 continue;
               }
               videoUrl = extractResult.videoUrl;
+              pageTitle = extractResult.pageTitle;
             }
 
-            const result = await downloadVideo(videoUrl, chatId);
+            const result = await downloadVideo(videoUrl, chatId, pageTitle);
             if (!result.success) {
               failed++;
               activeDownloads--;
               continue;
             }
 
-            const caption = `▬▬▬▬▬ ${currentIndex + 1}/${links.length} ▬▬▬▬▬\n${result.filename}\n❖ ${(result.fileSize / 1024 / 1024).toFixed(2)}MB ❖\n▬▬▬▬▬▬▬▬▬▬▬▬▬`;
+            const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
+            const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
+            const caption = `▬▬▬▬▬ ${currentIndex + 1}/${links.length} ▬▬▬▬▬\n${filenameCleaned}\n\n          ❖ ${fileSizeMB}MB ❖\n▬▬▬▬▬▬▬▬▬▬▬▬▬`;
             const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, { caption });
 
             if (uploadResult.success) {
@@ -883,9 +903,15 @@ bot.on('callback_query', async (query) => {
       const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext)) || urlPath.includes('/get_file/');
 
       let videoUrl;
+      let pageTitle = null;
 
       if (isDirectVideoLink) {
         videoUrl = link;
+        
+        const contentCheck = await checkContentType(link);
+        if (contentCheck.success && contentCheck.isM3U8) {
+          console.log(`[INFO] Direct link is M3U8, will be handled by downloader`);
+        }
         
         await bot.editMessageText(
           `⏳ Downloading video ${index + 1}...`,
@@ -908,6 +934,7 @@ bot.on('callback_query', async (query) => {
         }
 
         videoUrl = extractResult.videoUrl;
+        pageTitle = extractResult.pageTitle;
 
         await bot.editMessageText(
           `⏳ Downloading video ${index + 1}...`,
@@ -915,7 +942,7 @@ bot.on('callback_query', async (query) => {
         );
       }
 
-      const result = await downloadVideo(videoUrl, chatId);
+      const result = await downloadVideo(videoUrl, chatId, pageTitle);
 
       if (!result.success) {
         await bot.editMessageText(
@@ -930,7 +957,9 @@ bot.on('callback_query', async (query) => {
         { chat_id: chatId, message_id: messageId }
       );
 
-      const uploadCaption = `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`;
+      const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
+      const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
+      const uploadCaption = `▬▬▬▬▬▬▬▬▬▬▬▬▬\n${filenameCleaned}\n\n          ❖ ${fileSizeMB}MB ❖\n▬▬▬▬▬▬▬▬▬▬▬▬▬`;
       const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, {
         caption: uploadCaption
       });
