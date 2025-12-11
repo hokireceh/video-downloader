@@ -1040,6 +1040,52 @@ async function extractVideoFromHTML(pageUrl) {
   }
 }
 
+// Fungsi untuk parse M3U8 playlist dan ambil video URL
+async function parseM3U8Playlist(url, baseUrl = null) {
+  try {
+    console.log(`[M3U8] Fetching playlist: ${url}`);
+    
+    const response = await axios({
+      url: url,
+      method: 'GET',
+      timeout: CONFIG.HTTP_REQUEST_TIMEOUT,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    const content = response.data;
+    const lines = content.split('\n');
+    const videoUrls = [];
+
+    // Parse M3U8 format
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // Skip comments dan empty lines
+      if (!line || line.startsWith('#')) continue;
+      
+      // Check jika URL-like
+      if (line.startsWith('http')) {
+        videoUrls.push(line);
+      } else if (line && !line.startsWith('#')) {
+        // Relative path - convert ke absolute
+        if (baseUrl) {
+          const base = new URL(baseUrl);
+          const absoluteUrl = new URL(line, baseUrl);
+          videoUrls.push(absoluteUrl.toString());
+        }
+      }
+    }
+
+    console.log(`[M3U8] Found ${videoUrls.length} video segments`);
+    return { success: true, videoUrls: videoUrls };
+  } catch (error) {
+    console.error(`[M3U8] Parse failed: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
 // Fungsi download video
 async function downloadVideo(url, chatId) {
   let filePath = null;
@@ -1081,6 +1127,24 @@ async function downloadVideo(url, chatId) {
     const contentLength = response.headers['content-length'];
     console.log(`[INFO] Content-Type: ${contentType}, Content-Length: ${contentLength}`);
 
+    // Cek apakah response adalah HLS M3U8 playlist
+    if (contentType.includes('mpegurl') || url.includes('.m3u8')) {
+      console.log(`[M3U8] Detected HLS playlist, parsing...`);
+      response.data.destroy();
+      
+      const playlistResult = await parseM3U8Playlist(url);
+      if (!playlistResult.success || playlistResult.videoUrls.length === 0) {
+        return {
+          success: false,
+          error: 'Gagal parse HLS playlist. Tidak ada video segments ditemukan.'
+        };
+      }
+
+      // Download video segment pertama (biasanya kualitas terbaik atau cukup representative)
+      console.log(`[M3U8] Downloading first video segment of ${playlistResult.videoUrls.length} segments`);
+      return downloadVideo(playlistResult.videoUrls[0], chatId);
+    }
+
     // Cek apakah response adalah HTML (halaman web), bukan video
     if (contentType.includes('text/html')) {
       return {
@@ -1104,11 +1168,23 @@ async function downloadVideo(url, chatId) {
       };
     }
 
+    // Generate clean filename
     const urlPath = new URL(url).pathname;
-    let filename = path.basename(urlPath) || `video_${Date.now()}.mp4`;
-
-    // Sanitize filename untuk keamanan
+    let filename = path.basename(urlPath) || `video_${Date.now()}`;
+    
+    // Remove query string jika ada (hanya ambil filename part)
+    if (filename.includes('?')) {
+      filename = filename.split('?')[0];
+    }
+    
+    // Sanitize filename untuk keamanan - ganti special chars dengan underscore
     filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    
+    // Limit filename length untuk keamanan filesystem (max 200 chars)
+    if (filename.length > 200) {
+      const ext = filename.substring(filename.lastIndexOf('.'));
+      filename = filename.substring(0, 200 - ext.length) + ext;
+    }
 
     if (!filename.includes('.')) {
       filename += '.mp4';
