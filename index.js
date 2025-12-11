@@ -1367,16 +1367,13 @@ async function downloadVideo(url, chatId) {
             return;
           }
 
-          console.log(`[SUCCESS] Found ${videoUrls.length} unique video URLs (after deduplication)`);
-
-    return {
-      success: true,
-      videoUrls: validatedUrlsArray,  // Return ALL video URLs (multiple quality options)
-      videoUrl: validatedUrlsArray[0],  // Keep first one for backward compatibility
-      foundMultiple: validatedUrlsArray.length > 1,
-      totalFound: validatedUrlsArray.length,
-      pageTitle: pageTitle  // Include page title untuk multi-quality menu
-    };
+          console.log(`[SUCCESS] Direct download: ${filename} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
+          resolve({
+            success: true,
+            filePath: filePath,
+            filename: filename,
+            fileSize: fileSize
+          });
         } catch (err) {
           console.error(`[ERROR] File validation failed: ${err.message}`);
           // Cleanup jika ada error
