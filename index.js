@@ -2559,37 +2559,71 @@ bot.on('callback_query', async (query) => {
           let uploadSuccess = false;
           let uploadAttempts = 0;
           let fileStream = null;
+          const maxUploadRetries = 3;
           
-          while (!uploadSuccess && uploadAttempts < 2) {
+          while (!uploadSuccess && uploadAttempts < maxUploadRetries) {
             try {
               uploadAttempts++;
+              
+              if (uploadAttempts > 1) {
+                console.log(`[RETRY] Upload attempt ${uploadAttempts}/${maxUploadRetries}`);
+              }
+              
               fileStream = fs.createReadStream(result.filePath);
-              await bot.sendVideo(chatId, fileStream, { supports_streaming: true, timeout: 300000 }, { filename: result.filename, contentType });
+              await bot.sendVideo(chatId, fileStream, { 
+                supports_streaming: true, 
+                timeout: 300000,
+                parse_mode: 'HTML'
+              }, { 
+                filename: result.filename, 
+                contentType: contentType 
+              });
+              
               uploadSuccess = true;
               addToHistory(link, userId, result.filename, 'sent');
               success++;
+              console.log(`[SUCCESS] Video uploaded: ${result.filename}`);
+              
+              // Cleanup file AFTER successful upload
+              try {
+                if (fs.existsSync(result.filePath)) {
+                  fs.unlinkSync(result.filePath);
+                  console.log(`[CLEANUP] Deleted: ${result.filename}`);
+                }
+              } catch (cleanupErr) {
+                console.warn(`[WARN] Cleanup failed: ${cleanupErr.message}`);
+              }
+              
             } catch (err) {
-              console.error(`[ERROR] Upload attempt ${uploadAttempts} failed: ${err.message}`);
+              console.error(`[ERROR] Upload attempt ${uploadAttempts}/${maxUploadRetries} failed: ${err.message}`);
+              
               // Destroy stream on error to prevent memory leak
               try { if (fileStream) fileStream.destroy(); } catch (e) {}
-              if (uploadAttempts >= 2) {
-                console.error(`[ERROR] Upload failed after ${uploadAttempts} attempts`);
+              
+              // Check if error is retryable
+              const isRetryable = !err.message.includes('file is too big') && 
+                                 !err.message.includes('wrong file identifier') &&
+                                 uploadAttempts < maxUploadRetries;
+              
+              if (isRetryable) {
+                // Wait before retry (exponential backoff)
+                await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
+              } else {
+                console.error(`[ERROR] Upload failed after ${uploadAttempts} attempts - not retryable`);
                 failed++;
+                
+                // Cleanup file on permanent failure
+                try {
+                  if (fs.existsSync(result.filePath)) {
+                    fs.unlinkSync(result.filePath);
+                    console.log(`[CLEANUP] Deleted after failure: ${result.filename}`);
+                  }
+                } catch (cleanupErr) {
+                  console.warn(`[WARN] Cleanup failed: ${cleanupErr.message}`);
+                }
               }
             }
           }
-          
-          // Cleanup file after upload attempt
-          setImmediate(() => {
-            try {
-              if (fs.existsSync(result.filePath)) {
-                fs.unlinkSync(result.filePath);
-                console.log(`[CLEANUP] Deleted: ${result.filename}`);
-              }
-            } catch (cleanupErr) {
-              console.error(`[ERROR] Cleanup failed: ${cleanupErr.message}`);
-            }
-          });
         } catch (error) {
           console.error(`[ERROR] Selected download error: ${error.message}`);
           failed++;
