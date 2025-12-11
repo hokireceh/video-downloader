@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { CONFIG, useLocalAPI } = require('../config');
 const { sanitizeFilename } = require('../utils/security');
+const { parseM3U8Playlist } = require('./scraper');
 
 if (!fs.existsSync(CONFIG.DOWNLOAD_FOLDER)) {
   fs.mkdirSync(CONFIG.DOWNLOAD_FOLDER, { recursive: true });
@@ -14,6 +15,30 @@ async function downloadVideo(videoUrl, chatId) {
   
   try {
     console.log(`[INFO] Starting download: ${videoUrl}`);
+
+    // Check if URL is M3U8 playlist
+    if (videoUrl.includes('.m3u8') || videoUrl.endsWith('.m3u8')) {
+      console.log(`[INFO] Detected M3U8 playlist, parsing...`);
+      const parseResult = await parseM3U8Playlist(videoUrl);
+      
+      if (!parseResult.success) {
+        return {
+          success: false,
+          error: `Gagal parse M3U8 playlist: ${parseResult.error}`
+        };
+      }
+      
+      if (!parseResult.videoUrls || parseResult.videoUrls.length === 0) {
+        return {
+          success: false,
+          error: 'M3U8 playlist kosong atau tidak ada segment video'
+        };
+      }
+      
+      console.log(`[HLS] Downloading ${parseResult.videoUrls.length} segments...`);
+      const hlsResult = await downloadHLSSegments(parseResult.videoUrls, chatId, 'HLS Video');
+      return hlsResult;
+    }
 
     const urlObj = new URL(videoUrl);
     let filename = decodeURIComponent(urlObj.pathname.split('/').pop()) || `video_${Date.now()}.mp4`;
