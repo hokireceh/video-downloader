@@ -162,6 +162,26 @@ async function extractVideoFromHTML(pageUrl) {
     console.log(`[INFO] Scraping page: ${pageUrl}`);
 
     const response = await axiosInstance.get(pageUrl);
+    const contentType = response.headers['content-type'] || '';
+    
+    console.log(`[DEBUG] Response content-type: ${contentType}, size: ${response.data.length} bytes`);
+
+    // Check if response is M3U8 playlist (sometimes returned without .m3u8 extension)
+    if (typeof response.data === 'string' && response.data.includes('#EXTM3U')) {
+      console.log(`[INFO] Detected M3U8 playlist in response body`);
+      const result = await parseM3U8Playlist(pageUrl);
+      if (result.success && result.videoUrls && result.videoUrls.length > 0) {
+        return {
+          success: true,
+          videoUrls: result.videoUrls,
+          videoUrl: result.videoUrls[0],
+          foundMultiple: result.videoUrls.length > 1,
+          totalFound: result.videoUrls.length,
+          pageTitle: 'M3U8 Stream',
+          isM3U8: true
+        };
+      }
+    }
 
     const $ = cheerio.load(response.data);
     const videoUrlsSet = new Set();
@@ -181,6 +201,7 @@ async function extractVideoFromHTML(pageUrl) {
     
     console.log(`[INFO] Page title extracted: ${pageTitle || '(none found)'}`);
 
+    // Extract from standard video tags
     $('video[src]').each((i, elem) => {
       const src = $(elem).attr('src');
       if (src) videoUrlsSet.add(src);
@@ -194,6 +215,37 @@ async function extractVideoFromHTML(pageUrl) {
     $('video[data-src]').each((i, elem) => {
       const src = $(elem).attr('data-src');
       if (src) videoUrlsSet.add(src);
+    });
+
+    // Extract from iframe src (for embedded players)
+    $('iframe[src]').each((i, elem) => {
+      const src = $(elem).attr('src');
+      if (src && (src.includes('video') || src.includes('player'))) {
+        // Check if iframe src is a direct video URL
+        if (src.match(/\.(mp4|webm|mkv|avi|mov|flv|wmv|m3u8)$/i)) {
+          videoUrlsSet.add(src);
+        }
+      }
+    });
+
+    // Extract from data attributes (some players use data-src, data-video-url, etc)
+    $('[data-video-url]').each((i, elem) => {
+      const src = $(elem).attr('data-video-url');
+      if (src) videoUrlsSet.add(src);
+    });
+
+    // Extract from script tags (some sites embed URLs in JSON)
+    $('script').each((i, elem) => {
+      const content = $(elem).text();
+      // Look for common URL patterns in script (simplified regex)
+      const urlMatches = content.match(/https?:\/\/[^\s"'<>]+?\.(mp4|webm|mkv|m3u8)/gi);
+      if (urlMatches) {
+        urlMatches.forEach(url => {
+          // Clean up URL (remove extra characters)
+          const cleanUrl = url.replace(/[",'].*$/, '');
+          if (cleanUrl) videoUrlsSet.add(cleanUrl);
+        });
+      }
     });
 
     const videoUrls = Array.from(videoUrlsSet);
