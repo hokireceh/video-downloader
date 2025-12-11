@@ -28,7 +28,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["cmake", "speedtest-cli", "wget"]
+packages = ["cmake", "speedtest-cli", "wget", "nano"]
 
 [userenv]
 
