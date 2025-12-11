@@ -583,7 +583,7 @@ async function resolveAndValidateHost(hostname) {
 }
 
 // Fungsi untuk generate keyboard dengan pagination dan multi-select
-function generatePaginationKeyboard(links, page, userId = null) {
+function generatePaginationKeyboard(links, page, userId = null, pageTitle = null) {
   const videosPerPage = CONFIG.VIDEOS_PER_PAGE;
   const totalPages = Math.ceil(links.length / videosPerPage);
   const startIdx = page * videosPerPage;
@@ -595,10 +595,25 @@ function generatePaginationKeyboard(links, page, userId = null) {
   // Tampilkan video untuk halaman ini dengan toggle buttons
   for (let i = startIdx; i < endIdx; i++) {
     const urlObj = new URL(links[i]);
-    let title = decodeURIComponent(urlObj.pathname.split('/').pop() || `Video ${i + 1}`)
-      .replace(/_\d+$/, '')
-      .replace(/[-_]/g, ' ')
-      .trim();
+    
+    // Try to get page title dari search entry jika tersedia
+    let title = pageTitle || '';
+    
+    // If no page title, fallback to URL extraction
+    if (!title) {
+      title = decodeURIComponent(urlObj.pathname.split('/').pop() || `Video ${i + 1}`)
+        .replace(/_\d+$/, '')
+        .replace(/[-_]/g, ' ')
+        .trim();
+    }
+
+    // If this is a direct video URL (quality option), append quality info
+    if (title && links.length > 1 && links[i].match(/(720p|480p|360p|1080p|4k|HD|SD)/i)) {
+      const qualityMatch = links[i].match(/(720p|480p|360p|1080p|4k|HD|SD)/i);
+      if (qualityMatch) {
+        title = `${title} (${qualityMatch[0]})`;
+      }
+    }
 
     const words = title.split(' ')
       .filter(w => !['video', 'porn', 'amateur', 'asian'].includes(w.toLowerCase()))
@@ -927,6 +942,22 @@ async function extractVideoFromHTML(pageUrl) {
 
     const $ = cheerio.load(response.data);
     const videoUrlsSet = new Set(); // Use Set untuk auto-deduplicate
+    
+    // Extract page title untuk digunakan dalam menu multi-quality
+    let pageTitle = '';
+    const titleTag = $('title').text().trim();
+    const h1Tag = $('h1').first().text().trim();
+    const metaOg = $('meta[property="og:title"]').attr('content');
+    
+    if (metaOg) {
+      pageTitle = metaOg;
+    } else if (h1Tag) {
+      pageTitle = h1Tag;
+    } else if (titleTag) {
+      pageTitle = titleTag.split('|')[0].trim(); // Ambil bagian sebelum |
+    }
+    
+    console.log(`[INFO] Page title extracted: ${pageTitle || '(none found)'}`);
 
     // Cari semua tag <video> dengan attribute src
     $('video[src]').each((i, elem) => {
@@ -996,7 +1027,8 @@ async function extractVideoFromHTML(pageUrl) {
       videoUrls: validatedUrlsArray,  // Return ALL video URLs (multiple quality options)
       videoUrl: validatedUrlsArray[0],  // Keep first one for backward compatibility
       foundMultiple: validatedUrlsArray.length > 1,
-      totalFound: validatedUrlsArray.length
+      totalFound: validatedUrlsArray.length,
+      pageTitle: pageTitle  // Include page title untuk multi-quality menu
     };
 
   } catch (error) {
@@ -1202,13 +1234,16 @@ async function downloadVideo(url, chatId) {
             return;
           }
 
-          console.log(`[SUCCESS] Direct download: ${filename} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
-          resolve({
-            success: true,
-            filePath: filePath,
-            filename: filename,
-            fileSize: fileSize
-          });
+          console.log(`[SUCCESS] Found ${videoUrls.length} unique video URLs (after deduplication)`);
+
+    return {
+      success: true,
+      videoUrls: validatedUrlsArray,  // Return ALL video URLs (multiple quality options)
+      videoUrl: validatedUrlsArray[0],  // Keep first one for backward compatibility
+      foundMultiple: validatedUrlsArray.length > 1,
+      totalFound: validatedUrlsArray.length,
+      pageTitle: pageTitle  // Include page title untuk multi-quality menu
+    };
         } catch (err) {
           console.error(`[ERROR] File validation failed: ${err.message}`);
           // Cleanup jika ada error
@@ -1514,7 +1549,8 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
           links: videoOptions,
           nextPageUrl: null,
           originalUrl: text,
-          currentPage: 1
+          currentPage: 1,
+          pageTitle: extractResult.pageTitle  // Store page title
         });
 
         userPagination.set(userId, {
@@ -1522,7 +1558,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
           messageId: loadingMsg.message_id
         });
 
-        const keyboard = generatePaginationKeyboard(videoOptions, 0, userId);
+        const keyboard = generatePaginationKeyboard(videoOptions, 0, userId, extractResult.pageTitle);
         const pageInfo = getPageInfo(videoOptions.length, 0, 1);
 
         await bot.editMessageText(
