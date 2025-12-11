@@ -57,9 +57,12 @@ async function downloadVideo(videoUrl, chatId) {
       method: 'HEAD',
       timeout: 10000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.google.com/',
+        'Accept': '*/*'
       },
-      maxRedirects: 5
+      maxRedirects: 5,
+      validateStatus: () => true
     }).catch(() => null);
 
     const contentLength = headResponse?.headers['content-length'];
@@ -82,10 +85,15 @@ async function downloadVideo(videoUrl, chatId) {
       timeout: CONFIG.DOWNLOAD_TIMEOUT,
       maxRedirects: 5,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.google.com/',
         'Accept': '*/*',
-        'Accept-Encoding': 'identity'
-      }
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      validateStatus: () => true
     });
 
     const writer = fs.createWriteStream(filePath);
@@ -113,6 +121,8 @@ async function downloadVideo(videoUrl, chatId) {
         const stats = fs.statSync(filePath);
         const fileSize = stats.size;
 
+        console.log(`[DOWNLOAD] File size check: ${fileSize} bytes, minimum: ${CONFIG.MIN_FILE_SIZE} bytes`);
+
         if (fileSize < CONFIG.MIN_FILE_SIZE) {
           try {
             fs.unlinkSync(filePath);
@@ -120,7 +130,7 @@ async function downloadVideo(videoUrl, chatId) {
           
           resolve({
             success: false,
-            error: `File terlalu kecil (${(fileSize / 1024).toFixed(2)}KB). Kemungkinan bukan video valid atau server menolak request.`
+            error: `File terlalu kecil (${(fileSize / 1024).toFixed(2)}KB). Kemungkinan file tidak valid atau server menolak request.`
           });
           return;
         }
