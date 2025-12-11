@@ -279,7 +279,7 @@ async function extractVideoFromHTML(pageUrl) {
       }
     }
 
-    const validatedUrlsArray = Array.from(validatedUrls);
+    let validatedUrlsArray = Array.from(validatedUrls);
 
     if (validatedUrlsArray.length === 0) {
       return {
@@ -288,7 +288,33 @@ async function extractVideoFromHTML(pageUrl) {
       };
     }
 
-    console.log(`[SUCCESS] Found and validated ${validatedUrlsArray.length} video URLs`);
+    // Deduplicate M3U8 links with different resolutions - keep only best resolution
+    const videoGroups = {};
+    const resolutionPriority = { '720p': 5, '1080p': 6, '480p': 3, '360p': 2, 'default': 1 };
+    
+    validatedUrlsArray.forEach(url => {
+      // Extract video ID from URL (e.g., 609534 from 609534_720p.mp4)
+      const idMatch = url.match(/\/(\d+)(?:_\d+p)?(?:\.m3u8)?(?:\?|$|\/)/);
+      const videoId = idMatch ? idMatch[1] : url;
+      
+      // Extract resolution from filename
+      let resolution = 'default';
+      if (url.includes('_720p') || url.includes('720')) resolution = '720p';
+      else if (url.includes('_1080p') || url.includes('1080')) resolution = '1080p';
+      else if (url.includes('_480p') || url.includes('480')) resolution = '480p';
+      else if (url.includes('_360p') || url.includes('360')) resolution = '360p';
+      
+      if (!videoGroups[videoId]) {
+        videoGroups[videoId] = { url, resolution, priority: resolutionPriority[resolution] || 0 };
+      } else if ((resolutionPriority[resolution] || 0) > videoGroups[videoId].priority) {
+        videoGroups[videoId] = { url, resolution, priority: resolutionPriority[resolution] || 0 };
+      }
+    });
+    
+    // Keep only best resolution of each video
+    validatedUrlsArray = Object.values(videoGroups).map(item => item.url);
+
+    console.log(`[SUCCESS] Found and validated ${validatedUrlsArray.length} video URLs (after resolution filter)`);
 
     return {
       success: true,
