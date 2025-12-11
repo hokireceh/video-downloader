@@ -1290,6 +1290,85 @@ async function downloadHLSSegments(segmentUrls, chatId, videoTitle = null) {
   }
 }
 
+// Fungsi untuk upload video ke Telegram dengan retry logic
+// Reusable untuk semua scenario (direct, selected, all)
+async function uploadVideoToTelegram(chatId, filePath, filename, options = {}) {
+  const {
+    caption = '',
+    onRetry = null,
+    onFail = null,
+    maxRetries = 2
+  } = options;
+
+  // Detect MIME type
+  const ext = path.extname(filename).toLowerCase();
+  const mimeTypes = {
+    '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+    '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv'
+  };
+  const contentType = mimeTypes[ext] || 'video/mp4';
+
+  let uploadSuccess = false;
+  let uploadAttempts = 0;
+  
+  while (!uploadSuccess && uploadAttempts < maxRetries) {
+    try {
+      uploadAttempts++;
+      
+      if (uploadAttempts > 1) {
+        console.log(`[RETRY] Upload attempt ${uploadAttempts}/${maxRetries}`);
+        if (onRetry) await onRetry(uploadAttempts, maxRetries);
+      }
+      
+      // Create stream dan upload
+      const fileStream = fs.createReadStream(filePath);
+      await bot.sendVideo(chatId, fileStream, {
+        caption: caption,
+        supports_streaming: true,
+        timeout: 300000
+      }, {
+        filename: filename,
+        contentType: contentType
+      });
+      
+      uploadSuccess = true;
+      console.log(`[SUCCESS] Video uploaded: ${filename}`);
+      
+    } catch (err) {
+      console.error(`[ERROR] Upload attempt ${uploadAttempts}/${maxRetries} failed: ${err.message}`);
+      try { fileStream.destroy(); } catch (e) {}
+      
+      // Check if retryable
+      const isRetryable = !err.message.includes('file is too big') && 
+                         !err.message.includes('wrong file identifier') &&
+                         uploadAttempts < maxRetries;
+      
+      if (isRetryable) {
+        // Exponential backoff: 2s, 4s
+        await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
+      } else {
+        console.error(`[ERROR] Upload failed - not retryable`);
+        if (onFail) await onFail(err.message);
+        return { success: false, error: err.message };
+      }
+    }
+  }
+
+  // Cleanup file after upload (success or fail)
+  setImmediate(() => {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`[CLEANUP] Deleted: ${filename}`);
+      }
+    } catch (err) {
+      console.warn(`[WARN] Cleanup failed: ${err.message}`);
+    }
+  });
+
+  return uploadSuccess ? { success: true } : { success: false, error: 'Upload failed' };
+}
+
 // Fungsi download video
 async function downloadVideo(url, chatId, videoTitle = null) {
   let filePath = null;
@@ -1952,98 +2031,44 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       `          ❖ ${fileSizeMB}MB ❖\n` +
       `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
-    // Kirim video ke user sebagai document dengan content-type yang tepat
-    let uploadSuccess = false;
-    let uploadAttempts = 0;
-    const maxUploadRetries = 2;
-    
-    while (!uploadSuccess && uploadAttempts < maxUploadRetries) {
-      try {
-        uploadAttempts++;
+    // Upload with unified function
+    const uploadResult = await uploadVideoToTelegram(chatId, result.filePath, result.filename, {
+      caption: caption,
+      onRetry: async (attempt, max) => {
+        await bot.editMessageText(
+          `⏫ Retry upload (${attempt}/${max})...`,
+          { chat_id: chatId, message_id: loadingMsg.message_id }
+        ).catch(() => {});
+      },
+      onFail: async (error) => {
+        let errorDetails = error;
+        let helpText = '';
         
-        if (uploadAttempts > 1) {
-          console.log(`[RETRY] Upload attempt ${uploadAttempts}/${maxUploadRetries}`);
-          await bot.editMessageText(
-            `⏫ Retry upload (${uploadAttempts}/${maxUploadRetries})...`,
-            { chat_id: chatId, message_id: loadingMsg.message_id }
-          ).catch(() => {});
+        if (error.includes('file is too big')) {
+          helpText = `\n\n💡 File terlalu besar untuk Telegram ${useLocalAPI ? 'Local API' : 'Cloud API'}.\n⚠️ Max: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`;
+        } else if (error.includes('ETELEGRAM')) {
+          errorDetails = error.replace('ETELEGRAM: ', '');
+          helpText = '\n\n💡 Error dari Telegram server. Coba lagi nanti.';
+        } else if (error.includes('ECONNRESET') || error.includes('ETIMEDOUT')) {
+          helpText = '\n\n💡 Koneksi terputus. Periksa koneksi internet Anda.';
         }
         
-        // Both Local API and Cloud API need streams, not file paths
-        // Local API handles large files (up to 2GB) internally
-        const fileStream = fs.createReadStream(result.filePath);
-        await bot.sendVideo(chatId, fileStream, {
-          caption: caption,
-          supports_streaming: true
-        }, {
-          filename: result.filename,
-          contentType: contentType
-        });
-
-        uploadSuccess = true;
-        
-        // Simpan ke history LANGSUNG setelah terkirim (sebelum cleanup)
-        addToHistory(text, userId, result.filename, 'sent');
-        console.log(`[HISTORY] Video marked as sent immediately after upload success`);
-
-        // Hapus pesan loading
-        await bot.deleteMessage(chatId, loadingMsg.message_id);
-        
-      } catch (uploadError) {
-        console.error(`[ERROR] Telegram upload failed (attempt ${uploadAttempts}): ${uploadError.message}`);
-        // Destroy stream on error to prevent memory leak
-        try { fileStream.destroy(); } catch (e) {}
-        
-        // Jika ini retry terakhir atau error yang tidak bisa di-retry
-        if (uploadAttempts >= maxUploadRetries || 
-            uploadError.message.includes('file is too big') || 
-            uploadError.message.includes('wrong file identifier') ||
-            uploadError.message.includes('Bad Request')) {
-          
-          // Cleanup file immediately on upload failure
-          if (fs.existsSync(result.filePath)) {
-            fs.unlinkSync(result.filePath);
-          }
-          
-          // Parse error message untuk memberikan feedback yang lebih baik
-          let errorDetails = uploadError.message;
-          let helpText = '';
-          
-          if (uploadError.message.includes('file is too big')) {
-            helpText = `\n\n💡 File terlalu besar untuk Telegram ${useLocalAPI ? 'Local API' : 'Cloud API'}.\n⚠️ Max: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`;
-          } else if (uploadError.message.includes('ETELEGRAM')) {
-            errorDetails = uploadError.message.replace('ETELEGRAM: ', '');
-            helpText = '\n\n💡 Error dari Telegram server. Coba lagi nanti.';
-          } else if (uploadError.message.includes('ECONNRESET') || uploadError.message.includes('ETIMEDOUT')) {
-            helpText = '\n\n💡 Koneksi terputus. Periksa koneksi internet Anda.';
-          }
-          
-          // Show error to user
-          await bot.editMessageText(
-            `❌ Gagal upload ke Telegram!\n\n` +
-            `Error: ${errorDetails}${helpText}`,
-            { chat_id: chatId, message_id: loadingMsg.message_id }
-          );
-          return;
-        }
-        
-        // Wait before retry (exponential backoff: 2s, 4s)
-        await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
-      }
-    }
-
-    // Auto-cleanup: Hapus file setelah dikirim
-    // Use setImmediate to ensure cleanup happens promptly instead of delayed setTimeout
-    setImmediate(() => {
-      try {
-        if (fs.existsSync(result.filePath)) {
-          fs.unlinkSync(result.filePath);
-          console.log(`[CLEANUP] Deleted sent file: ${result.filename}`);
-        }
-      } catch (cleanupError) {
-        console.error(`[ERROR] Auto-cleanup failed: ${cleanupError.message}`);
+        await bot.editMessageText(
+          `❌ Gagal upload ke Telegram!\n\n` +
+          `Error: ${errorDetails}${helpText}`,
+          { chat_id: chatId, message_id: loadingMsg.message_id }
+        );
       }
     });
+
+    if (!uploadResult.success) {
+      return;
+    }
+
+    // Simpan ke history & hapus loading message
+    addToHistory(text, userId, result.filename, 'sent');
+    console.log(`[HISTORY] Video marked as sent immediately after upload success`);
+    await bot.deleteMessage(chatId, loadingMsg.message_id);
 
   } catch (error) {
     console.error(`[ERROR] Message handler error: ${error.message}`);
@@ -2552,64 +2577,17 @@ bot.on('callback_query', async (query) => {
             continue;
           }
 
-          const ext = path.extname(result.filename).toLowerCase();
-          const mimeTypes = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv' };
-          const contentType = mimeTypes[ext] || 'video/mp4';
-
-          let uploadSuccess = false;
-          let uploadAttempts = 0;
-          let fileStream = null;
-          const maxUploadRetries = 2;
-          
-          while (!uploadSuccess && uploadAttempts < maxUploadRetries) {
-            try {
-              uploadAttempts++;
-              
-              if (uploadAttempts > 1) {
-                console.log(`[RETRY] Upload attempt ${uploadAttempts}/${maxUploadRetries}`);
-              }
-              
-              fileStream = fs.createReadStream(result.filePath);
-              await bot.sendVideo(chatId, fileStream, {
-                supports_streaming: true,
-                timeout: 300000
-              }, {
-                filename: result.filename,
-                contentType: contentType
-              });
-              
-              uploadSuccess = true;
-              addToHistory(link, userId, result.filename, 'sent');
-              success++;
-              console.log(`[SUCCESS] Video uploaded: ${result.filename}`);
-              
-            } catch (err) {
-              console.error(`[ERROR] Upload attempt ${uploadAttempts}/${maxUploadRetries} failed: ${err.message}`);
-              try { if (fileStream) fileStream.destroy(); } catch (e) {}
-              
-              if (uploadAttempts >= maxUploadRetries || 
-                  err.message.includes('file is too big') ||
-                  err.message.includes('wrong file identifier')) {
-                console.error(`[ERROR] Upload failed - not retryable`);
-                failed++;
-              } else {
-                // Exponential backoff: 2s, 4s
-                await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
-              }
-            }
-          }
-          
-          // Cleanup file after upload (success or final fail)
-          setImmediate(() => {
-            try {
-              if (fs.existsSync(result.filePath)) {
-                fs.unlinkSync(result.filePath);
-                console.log(`[CLEANUP] Deleted: ${result.filename}`);
-              }
-            } catch (cleanupErr) {
-              console.warn(`[WARN] Cleanup failed: ${cleanupErr.message}`);
-            }
+          const uploadResult = await uploadVideoToTelegram(chatId, result.filePath, result.filename, {
+            caption: '',
+            onFail: async () => { failed++; }
           });
+          
+          if (uploadResult.success) {
+            addToHistory(link, userId, result.filename, 'sent');
+            success++;
+          } else {
+            failed++;
+          }
         } catch (error) {
           console.error(`[ERROR] Selected download error: ${error.message}`);
           failed++;
@@ -2668,61 +2646,19 @@ bot.on('callback_query', async (query) => {
               continue;
             }
             
-            let uploadSuccess = false;
-            let uploadAttempts = 0;
-            const maxUploadRetries = 2;
-            
-            while (!uploadSuccess && uploadAttempts < maxUploadRetries) {
-              try {
-                uploadAttempts++;
-                
-                if (!fs.existsSync(uploadTask.filePath)) {
-                  throw new Error(`File was deleted before upload attempt ${uploadAttempts}`);
-                }
-                
-                const fileStream = fs.createReadStream(uploadTask.filePath);
-                await bot.sendVideo(chatId, fileStream, { 
-                  caption: uploadTask.caption, 
-                  supports_streaming: true, 
-                  timeout: uploadTask.uploadTimeout 
-                }, { 
-                  filename: uploadTask.filename, 
-                  contentType: uploadTask.contentType 
-                });
-                
-                uploadSuccess = true;
-                const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(1);
-                console.log(`[UPLOAD] Success: ${uploadTask.filename} (${uploadDuration}s)`);
-                addToHistory(uploadTask.link, userId, uploadTask.filename, 'sent');
-                uploadTask.onSuccess();
-              } catch (err) {
-                console.error(`[ERROR] Upload attempt ${uploadAttempts}/${maxUploadRetries} failed for ${uploadTask.filename}: ${err.message}`);
-                try { fileStream.destroy(); } catch (e) {}
-                
-                if (uploadAttempts >= maxUploadRetries || 
-                    err.message.includes('file is too big') ||
-                    err.message.includes('wrong file identifier')) {
-                  console.error(`[ERROR] Final upload failure for ${uploadTask.filename} - marking as failed`);
-                  uploadTask.onFail();
-                } else {
-                  // Exponential backoff: 2s, 4s
-                  await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
-                }
-              }
-            }
-            
-            // Cleanup file after upload completes (success or fail)
-            // Use setImmediate instead of setTimeout to ensure cleanup happens before next upload
-            setImmediate(() => {
-              try {
-                if (fs.existsSync(uploadTask.filePath)) {
-                  fs.unlinkSync(uploadTask.filePath);
-                  console.log(`[CLEANUP] Deleted: ${uploadTask.filename}`);
-                }
-              } catch (err) {
-                console.error(`[ERROR] Cleanup failed for ${uploadTask.filename}: ${err.message}`);
-              }
+            const uploadResult = await uploadVideoToTelegram(chatId, uploadTask.filePath, uploadTask.filename, {
+              caption: uploadTask.caption
             });
+
+            const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(1);
+            console.log(`[UPLOAD] ${uploadResult.success ? 'Success' : 'Failed'}: ${uploadTask.filename} (${uploadDuration}s)`);
+            
+            if (uploadResult.success) {
+              addToHistory(uploadTask.link, userId, uploadTask.filename, 'sent');
+              uploadTask.onSuccess();
+            } else {
+              uploadTask.onFail();
+            }
             
           } catch (error) {
             console.error(`[ERROR] Upload queue processing error: ${error.message}`);
