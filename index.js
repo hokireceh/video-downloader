@@ -2310,7 +2310,9 @@ bot.on('callback_query', async (query) => {
           // Check if link is already a direct video URL (from multi-quality selection)
           const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp'];
           const urlPath = new URL(link).pathname.toLowerCase();
-          const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext));
+          // Remove trailing slash before checking extension
+          const cleanPath = urlPath.replace(/\/$/, '');
+          const isDirectVideoLink = videoExtensions.some(ext => cleanPath.endsWith(ext));
 
           let videoUrl;
           if (isDirectVideoLink) {
@@ -2318,16 +2320,47 @@ bot.on('callback_query', async (query) => {
             console.log(`[INFO] Direct video URL detected for selected video ${i + 1}, skipping extraction`);
             videoUrl = link;
           } else {
-            // Need to extract video URL from HTML page
-            const extractResult = await extractVideoFromHTML(link).catch(err => ({ success: false, error: err.message }));
+            // Need to extract video URL from HTML page or handle M3U8
+            // Try to download and check content-type first
+            try {
+              const headResponse = await axios({
+                url: link,
+                method: 'HEAD',
+                timeout: 5000,
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                maxRedirects: 3
+              }).catch(() => null);
 
-            if (!extractResult.success) {
-              console.warn(`[WARN] Failed to extract: ${extractResult.error}`);
-              failed++;
-              continue;
+              const contentType = headResponse?.headers['content-type'] || '';
+              
+              // If it's M3U8 or video file, pass directly to download handler
+              if (contentType.includes('mpegurl') || contentType.includes('video/')) {
+                console.log(`[INFO] Content-Type detected: ${contentType}, bypassing extraction`);
+                videoUrl = link;
+              } else {
+                // It's HTML page, extract video from it
+                const extractResult = await extractVideoFromHTML(link).catch(err => ({ success: false, error: err.message }));
+
+                if (!extractResult.success) {
+                  console.warn(`[WARN] Failed to extract: ${extractResult.error}`);
+                  failed++;
+                  continue;
+                }
+
+                videoUrl = extractResult.videoUrl;
+              }
+            } catch (err) {
+              console.warn(`[WARN] HEAD request failed, trying extraction: ${err.message}`);
+              const extractResult = await extractVideoFromHTML(link).catch(err => ({ success: false, error: err.message }));
+
+              if (!extractResult.success) {
+                console.warn(`[WARN] Failed to extract: ${extractResult.error}`);
+                failed++;
+                continue;
+              }
+
+              videoUrl = extractResult.videoUrl;
             }
-
-            videoUrl = extractResult.videoUrl;
           }
 
           const result = await downloadVideo(videoUrl, chatId).catch(err => ({ success: false, error: err.message }));
@@ -2524,25 +2557,49 @@ bot.on('callback_query', async (query) => {
             // Check if link is already a direct video URL
             const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp'];
             const urlPath = new URL(link).pathname.toLowerCase();
-            const isDirectVideoLink = videoExtensions.some(ext => urlPath.endsWith(ext));
+            // Remove trailing slash before checking extension
+            const cleanPath = urlPath.replace(/\/$/, '');
+            const isDirectVideoLink = videoExtensions.some(ext => cleanPath.endsWith(ext));
 
             let videoUrl;
             if (isDirectVideoLink) {
               videoUrl = link;
             } else {
-              const extractResult = await Promise.race([
-                extractVideoFromHTML(link),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), CONFIG.SCRAPE_TIMEOUT))
-              ]).catch(err => ({ success: false, error: err.message }));
-
-              if (!extractResult.success) {
-                console.warn(`[WARN] Failed to extract video from ${link}: ${extractResult.error}`);
-                failed++;
-                processed++;
-                activeDownloads--;
-                continue;
+              // Check content-type first before extraction
+              let contentType = '';
+              try {
+                const headResponse = await axios({
+                  url: link,
+                  method: 'HEAD',
+                  timeout: 5000,
+                  headers: { 'User-Agent': 'Mozilla/5.0' },
+                  maxRedirects: 3
+                }).catch(() => null);
+                
+                contentType = headResponse?.headers['content-type'] || '';
+              } catch (err) {
+                // Continue to extraction if HEAD fails
               }
-              videoUrl = extractResult.videoUrl;
+
+              // If M3U8 or video content-type, use directly
+              if (contentType.includes('mpegurl') || contentType.includes('video/')) {
+                console.log(`[INFO] Content-Type: ${contentType}, using directly`);
+                videoUrl = link;
+              } else {
+                const extractResult = await Promise.race([
+                  extractVideoFromHTML(link),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), CONFIG.SCRAPE_TIMEOUT))
+                ]).catch(err => ({ success: false, error: err.message }));
+
+                if (!extractResult.success) {
+                  console.warn(`[WARN] Failed to extract video from ${link}: ${extractResult.error}`);
+                  failed++;
+                  processed++;
+                  activeDownloads--;
+                  continue;
+                }
+                videoUrl = extractResult.videoUrl;
+              }
             }
 
             // Download video
