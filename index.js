@@ -2974,44 +2974,14 @@ bot.on('callback_query', async (query) => {
         { chat_id: chatId, message_id: messageId }
       );
 
-      // Kirim video
-      const ext = path.extname(result.filename).toLowerCase();
-      const mimeTypes = {
-        '.mp4': 'video/mp4',
-        '.webm': 'video/webm',
-        '.mkv': 'video/x-matroska',
-        '.avi': 'video/x-msvideo',
-        '.mov': 'video/quicktime',
-        '.flv': 'video/x-flv',
-        '.wmv': 'video/x-ms-wmv'
-      };
-      const contentType = mimeTypes[ext] || 'video/mp4';
+      // Upload using unified function
+      const uploadCaption = `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`;
+      const uploadResult = await uploadVideoToTelegram(chatId, result.filePath, result.filename, {
+        caption: uploadCaption
+      });
 
-      // Send document - both APIs need streams with retry logic
-      let uploadSuccess = false;
-      let uploadAttempts = 0;
-      const maxRetries = 2;
-      
-      while (!uploadSuccess && uploadAttempts < maxRetries) {
-        try {
-          uploadAttempts++;
-          
-          const fileStream = fs.createReadStream(result.filePath);
-          await bot.sendDocument(chatId, fileStream, {
-            caption: `📹 ${result.filename}\n💾 ${(result.fileSize / 1024 / 1024).toFixed(2)}MB`
-          }, {
-            filename: result.filename,
-            contentType: contentType
-          });
-          
-          uploadSuccess = true;
-        } catch (retryError) {
-          console.error(`[ERROR] Upload retry ${uploadAttempts}/${maxRetries}: ${retryError.message}`);
-          if (uploadAttempts >= maxRetries) {
-            throw retryError;
-          }
-          await new Promise(resolve => setTimeout(resolve, 2000 * uploadAttempts));
-        }
+      if (!uploadResult.success) {
+        throw new Error(`Upload failed: ${uploadResult.error}`);
       }
 
       // Simpan ke history
@@ -3021,18 +2991,6 @@ bot.on('callback_query', async (query) => {
 
       // Clear pagination state
       userPagination.delete(userId);
-
-      // Auto-cleanup
-      setTimeout(() => {
-        try {
-          if (fs.existsSync(result.filePath)) {
-            fs.unlinkSync(result.filePath);
-            console.log(`[CLEANUP] Deleted: ${result.filename}`);
-          }
-        } catch (err) {
-          console.error(`[ERROR] Cleanup failed: ${err.message}`);
-        }
-      }, CONFIG.FILE_AUTO_DELETE_DELAY);
     }
 
   } catch (error) {
