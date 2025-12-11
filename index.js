@@ -1144,7 +1144,7 @@ async function parseM3U8Playlist(url, baseUrl = null, isNestedLevel = false) {
 }
 
 // Fungsi untuk download dan concatenate semua HLS segments
-async function downloadHLSSegments(segmentUrls, chatId) {
+async function downloadHLSSegments(segmentUrls, chatId, videoTitle = null) {
   if (!segmentUrls || segmentUrls.length === 0) {
     return { success: false, error: 'No segments to download' };
   }
@@ -1206,7 +1206,18 @@ async function downloadHLSSegments(segmentUrls, chatId) {
     console.log(`[HLS] Downloaded ${downloadedSegments.length} segments, concatenating...`);
 
     // Concatenate segments jadi satu file
-    filePath = path.join(CONFIG.DOWNLOAD_FOLDER, `video_${Date.now()}.mp4`);
+    // Gunakan video title jika ada, otherwise generate generic name
+    let filename = `video_${Date.now()}.mp4`;
+    if (videoTitle) {
+      filename = videoTitle.replace(/[^a-zA-Z0-9._-]/g, '_');
+      if (filename.length > 200) {
+        filename = filename.substring(0, 200);
+      }
+      if (!filename.endsWith('.mp4')) {
+        filename += '.mp4';
+      }
+    }
+    filePath = path.join(CONFIG.DOWNLOAD_FOLDER, filename);
     
     // Buka file output untuk write
     const outputStream = fs.createWriteStream(filePath);
@@ -1333,10 +1344,17 @@ async function downloadVideo(url, chatId) {
         };
       }
 
+      // Extract title dari URL jika bisa untuk digunakan di filename
+      const urlObj = new URL(url);
+      let titleFromUrl = path.basename(urlObj.pathname).replace(/[_\-]/g, ' ').trim();
+      if (titleFromUrl.includes('.')) {
+        titleFromUrl = titleFromUrl.split('.')[0];
+      }
+
       // Download semua segments dan concatenate
       if (playlistResult.videoUrls.length > 1) {
         console.log(`[M3U8] Downloading and concatenating ${playlistResult.videoUrls.length} segments...`);
-        return downloadHLSSegments(playlistResult.videoUrls, chatId);
+        return downloadHLSSegments(playlistResult.videoUrls, chatId, titleFromUrl);
       } else {
         // Single segment, download langsung
         console.log(`[M3U8] Downloading single video segment`);
