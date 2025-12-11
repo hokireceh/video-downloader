@@ -33,4 +33,4 @@ packages = ["cmake", "speedtest-cli", "wget", "nano"]
 [userenv]
 
 [userenv.shared]
-LOCAL_API_URL = "http://api.bukitcuan.fun:8081"
+LOCAL_API_URL = "http://api.bukitcuan.fun"
