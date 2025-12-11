@@ -1041,9 +1041,9 @@ async function extractVideoFromHTML(pageUrl) {
 }
 
 // Fungsi untuk parse M3U8 playlist dan ambil video URL
-async function parseM3U8Playlist(url, baseUrl = null) {
+async function parseM3U8Playlist(url, baseUrl = null, isNestedLevel = false) {
   try {
-    console.log(`[M3U8] Fetching playlist: ${url}`);
+    console.log(`[M3U8] Fetching playlist: ${url}${isNestedLevel ? ' (nested)' : ''}`);
     
     const response = await axios({
       url: url,
@@ -1056,26 +1056,83 @@ async function parseM3U8Playlist(url, baseUrl = null) {
 
     const content = response.data;
     const lines = content.split('\n');
+    const playlistUrl = baseUrl || url;
+    const playlistBase = new URL(playlistUrl).href.substring(0, new URL(playlistUrl).href.lastIndexOf('/') + 1);
+    
+    // Check if this is a master playlist (has EXT-X-STREAM-INF) atau variant playlist
+    const isMasterPlaylist = content.includes('EXT-X-STREAM-INF');
+    
+    console.log(`[M3U8] Playlist type: ${isMasterPlaylist ? 'MASTER (variants)' : 'VARIANT (segments)'}`);
+    
+    if (isMasterPlaylist && !isNestedLevel) {
+      // Master playlist - extract variant streams dengan resolution info
+      const variants = [];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        if (line.startsWith('#EXT-X-STREAM-INF')) {
+          // Next line adalah URL untuk variant playlist
+          if (i + 1 < lines.length) {
+            let variantUrl = lines[i + 1].trim();
+            
+            if (!variantUrl || variantUrl.startsWith('#')) continue;
+            
+            // Convert relative URL ke absolute
+            if (!variantUrl.startsWith('http')) {
+              variantUrl = new URL(variantUrl, playlistBase).toString();
+            }
+            
+            // Extract resolution dari EXT-X-STREAM-INF
+            const resolutionMatch = line.match(/RESOLUTION=(\d+x\d+)/);
+            const bandwidthMatch = line.match(/BANDWIDTH=(\d+)/);
+            const resolution = resolutionMatch ? resolutionMatch[1] : 'unknown';
+            const bandwidth = bandwidthMatch ? parseInt(bandwidthMatch[1]) : 0;
+            
+            variants.push({
+              url: variantUrl,
+              resolution: resolution,
+              bandwidth: bandwidth
+            });
+            
+            console.log(`[M3U8] Found variant: ${resolution} (${bandwidth} bps)`);
+          }
+        }
+      }
+      
+      if (variants.length === 0) {
+        return { success: false, error: 'No variant streams found' };
+      }
+      
+      // Pilih highest bandwidth/quality
+      const bestVariant = variants.reduce((best, current) => 
+        current.bandwidth > best.bandwidth ? current : best
+      );
+      
+      console.log(`[M3U8] Selected best variant: ${bestVariant.resolution}`);
+      
+      // Parse nested M3U8 (variant playlist)
+      return parseM3U8Playlist(bestVariant.url, bestVariant.url, true);
+    }
+    
+    // Variant/segment playlist - extract actual video segments
     const videoUrls = [];
-
-    // Parse M3U8 format
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       
       // Skip comments dan empty lines
       if (!line || line.startsWith('#')) continue;
       
-      // Check jika URL-like
-      if (line.startsWith('http')) {
-        videoUrls.push(line);
-      } else if (line && !line.startsWith('#')) {
-        // Relative path - convert ke absolute
-        if (baseUrl) {
-          const base = new URL(baseUrl);
-          const absoluteUrl = new URL(line, baseUrl);
-          videoUrls.push(absoluteUrl.toString());
-        }
+      // Ini adalah segment URL
+      let segmentUrl = line;
+      
+      // Convert relative URL ke absolute
+      if (!segmentUrl.startsWith('http')) {
+        segmentUrl = new URL(segmentUrl, playlistBase).toString();
       }
+      
+      videoUrls.push(segmentUrl);
     }
 
     console.log(`[M3U8] Found ${videoUrls.length} video segments`);
