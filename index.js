@@ -1291,7 +1291,7 @@ async function downloadHLSSegments(segmentUrls, chatId, videoTitle = null) {
 }
 
 // Fungsi download video
-async function downloadVideo(url, chatId) {
+async function downloadVideo(url, chatId, videoTitle = null) {
   let filePath = null;
 
   try {
@@ -1358,7 +1358,16 @@ async function downloadVideo(url, chatId) {
       } else {
         // Single segment, download langsung
         console.log(`[M3U8] Downloading single video segment`);
-        return downloadVideo(playlistResult.videoUrls[0], chatId);
+        // Use video title passed in, or extract from URL
+        let titleToUse = videoTitle;
+        if (!titleToUse) {
+          const urlObj = new URL(url);
+          titleToUse = path.basename(urlObj.pathname).replace(/[_\-]/g, ' ').trim();
+          if (titleToUse.includes('.')) {
+            titleToUse = titleToUse.split('.')[0];
+          }
+        }
+        return downloadVideo(playlistResult.videoUrls[0], chatId, titleToUse);
       }
     }
 
@@ -1385,17 +1394,28 @@ async function downloadVideo(url, chatId) {
       };
     }
 
-    // Generate clean filename
-    const urlPath = new URL(url).pathname;
-    let filename = path.basename(urlPath) || `video_${Date.now()}`;
-    
-    // Remove query string jika ada (hanya ambil filename part)
-    if (filename.includes('?')) {
-      filename = filename.split('?')[0];
+    // Generate clean filename - gunakan video title jika ada, atau extract dari URL
+    let filename;
+    if (videoTitle) {
+      filename = videoTitle.replace(/[^a-zA-Z0-9._-]/g, '_');
+      if (filename.length > 200) {
+        filename = filename.substring(0, 200);
+      }
+      if (!filename.endsWith('.mp4')) {
+        filename += '.mp4';
+      }
+    } else {
+      const urlPath = new URL(url).pathname;
+      filename = path.basename(urlPath) || `video_${Date.now()}`;
+      
+      // Remove query string jika ada (hanya ambil filename part)
+      if (filename.includes('?')) {
+        filename = filename.split('?')[0];
+      }
+      
+      // Sanitize filename untuk keamanan - ganti special chars dengan underscore
+      filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     }
-    
-    // Sanitize filename untuk keamanan - ganti special chars dengan underscore
-    filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     
     // Limit filename length untuk keamanan filesystem (max 200 chars)
     if (filename.length > 200) {
@@ -2479,6 +2499,7 @@ bot.on('callback_query', async (query) => {
           } else {
             // Need to extract video URL from HTML page or handle M3U8
             // Try to download and check content-type first
+            let pageTitle = null;  // Store page title for filename
             try {
               const headResponse = await axios({
                 url: link,
@@ -2505,6 +2526,7 @@ bot.on('callback_query', async (query) => {
                 }
 
                 videoUrl = extractResult.videoUrl;
+                pageTitle = extractResult.pageTitle;  // Capture page title for proper filename
               }
             } catch (err) {
               console.warn(`[WARN] HEAD request failed, trying extraction: ${err.message}`);
@@ -2517,10 +2539,11 @@ bot.on('callback_query', async (query) => {
               }
 
               videoUrl = extractResult.videoUrl;
+              pageTitle = extractResult.pageTitle;  // Capture page title for proper filename
             }
           }
 
-          const result = await downloadVideo(videoUrl, chatId).catch(err => ({ success: false, error: err.message }));
+          const result = await downloadVideo(videoUrl, chatId, pageTitle).catch(err => ({ success: false, error: err.message }));
 
           if (!result.success) {
             console.warn(`[WARN] Failed to download: ${result.error}`);
