@@ -421,6 +421,7 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       `          ❖ ${fileSizeMB}MB ❖\n` +
       `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
+    addToHistory(text, userId, result.filename, 'pending');
     const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, {
       caption: caption,
       onRetry: async (attempt, max) => {
@@ -737,10 +738,11 @@ bot.on('callback_query', async (query) => {
           const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
           const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
           const caption = `▬▬▬▬▬▬▬▬▬▬▬▬▬\n${filenameCleaned}\n\n          ❖ ${fileSizeMB}MB ❖\n▬▬▬▬▬▬▬▬▬▬▬▬▬`;
+          addToHistory(link, userId, result.filename, 'pending');
           const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, { caption });
 
           if (uploadResult.success) {
-            addToHistory(link, userId, result.filename);
+            updateDownloadStatus(result.filename, 'sent');
             success++;
           } else {
             failed++;
@@ -835,10 +837,11 @@ bot.on('callback_query', async (query) => {
             const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
             const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
             const caption = `▬▬▬▬▬ ${currentIndex + 1}/${links.length} ▬▬▬▬▬\n${filenameCleaned}\n\n          ❖ ${fileSizeMB}MB ❖\n▬▬▬▬▬▬▬▬▬▬▬▬▬`;
+            addToHistory(link, userId, result.filename, 'pending');
             const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, { caption });
 
             if (uploadResult.success) {
-              addToHistory(link, userId, result.filename);
+              updateDownloadStatus(result.filename, 'sent');
               success++;
             } else {
               failed++;
@@ -993,6 +996,7 @@ bot.on('callback_query', async (query) => {
       const filenameCleaned = result.filename.replace(/\.[^/.]+$/, '');
       const fileSizeMB = (result.fileSize / 1024 / 1024).toFixed(2);
       const uploadCaption = `▬▬▬▬▬▬▬▬▬▬▬▬▬\n${filenameCleaned}\n\n          ❖ ${fileSizeMB}MB ❖\n▬▬▬▬▬▬▬▬▬▬▬▬▬`;
+      addToHistory(link, userId, result.filename, 'pending');
       const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, {
         caption: uploadCaption
       });
@@ -1001,7 +1005,7 @@ bot.on('callback_query', async (query) => {
         throw new Error(`Upload failed: ${uploadResult.error}`);
       }
 
-      addToHistory(link, userId, result.filename);
+      updateDownloadStatus(result.filename, 'sent');
       await bot.deleteMessage(chatId, messageId);
       userPagination.delete(userId);
     }
