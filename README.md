@@ -122,11 +122,46 @@ npm start
 ```
 Bot akan langsung jalan dengan Telegram Cloud API.
 
-**Opsi B: Local Bot API (Max 2GB)**
+**Opsi B.1: Local Bot API di Replit (Testing - Max 2GB)**
 
-Hanya untuk Ubuntu Server dengan Local Bot API + Tunnel sudah setup:
+Jika ingin test Local Bot API langsung di Replit sebelum deploy ke server:
 
 1. Set environment variables di `.env`:
+```env
+USE_LOCAL_API=true
+LOCAL_API_URL=http://localhost:8081
+TELEGRAM_API_ID=your_api_id_from_my_telegram_org
+TELEGRAM_API_HASH=your_api_hash_from_my_telegram_org
+```
+
+2. Setup & run Local Bot API:
+```bash
+chmod +x setup-local-api.sh start-local-api.sh
+./start-local-api.sh
+```
+Script akan:
+- Compile Telegram Bot API (jika belum ada)
+- Start Local Bot API di port 8081
+- Auto-restart jika crash
+
+3. Di terminal baru, run bot:
+```bash
+npm start
+```
+
+4. Bot akan connect ke Local Bot API di `http://localhost:8081` dan siap test file upload hingga 2GB.
+
+---
+
+**Opsi B.2: Local Bot API di Ubuntu Server (Production - Max 2GB)**
+
+Untuk production deployment dengan Local Bot API + Tunnel:
+
+1. Setup Local Bot API di Ubuntu server (lihat section "🔧 Setup Local Telegram Bot API" di bawah)
+
+2. Setup Tunnel untuk expose ke internet (ngrok atau Cloudflare)
+
+3. Set Replit environment variables:
 ```env
 USE_LOCAL_API=true
 LOCAL_API_URL=https://your-tunnel-url
@@ -134,14 +169,11 @@ TELEGRAM_API_ID=your_api_id_from_my_telegram_org
 TELEGRAM_API_HASH=your_api_hash_from_my_telegram_org
 ```
 
-2. Run bot:
+4. Run bot:
 ```bash
 npm start
 ```
-Bot akan connect ke Local Bot API via tunnel. Pastikan:
-- Local Bot API running di port 9090
-- Tunnel (ngrok/Cloudflare) aktif dan connected
-- `LOCAL_API_URL` sesuai dengan tunnel URL
+Bot akan connect ke Local Bot API via tunnel dengan file upload hingga 2GB support.
 
 ---
 
@@ -189,21 +221,51 @@ Jika ingin menyesuaikan folder download atau ukuran file:
 
 ---
 
-### Option B: Ubuntu Server + Local Bot API (Production - 2GB File Support)
+### Option B: Local Bot API (Testing & Production - Max 2GB File Support)
 
-Deploy bot dengan Local Bot API untuk support file hingga 2GB. Setup melibatkan 3 komponen:
-1. **Local Bot API**: Binary Telegram Bot API running di port 9090
-2. **Tunnel** (ngrok atau Cloudflare): Expose local API ke internet
-3. **Replit Bot**: Connect ke Local API via tunnel
-
-#### Architecture Overview
+#### B.1 Testing di Replit (Local)
 ```
-Replit Bot ─(HTTPS)─> ngrok/Cloudflare Tunnel ─> Localhost:9090 (Local Bot API)
+Replit Bot ──(HTTP)──> Localhost:8081 (Local Bot API)
+```
+Gunakan `start-local-api.sh` untuk quick testing.
+
+#### B.2 Production di Ubuntu Server
+```
+Replit Bot ─(HTTPS)─> Tunnel ─> Localhost:9090 (Ubuntu Local Bot API)
+                       (ngrok atau Cloudflare)
 ```
 
 ---
 
-## 🔧 Setup Local Telegram Bot API (Ubuntu Server)
+## 🔧 Setup Local Telegram Bot API
+
+### A. Quick Test di Replit (Using start-local-api.sh)
+
+Untuk quick testing Local Bot API di Replit:
+
+```bash
+# 1. Set environment variables di .env
+USE_LOCAL_API=true
+LOCAL_API_URL=http://localhost:8081
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_api_hash
+
+# 2. Jalankan setup & start script
+chmod +x setup-local-api.sh start-local-api.sh
+./start-local-api.sh
+
+# 3. Di terminal baru, run bot
+npm start
+```
+
+Script `start-local-api.sh` akan:
+- Auto-detect & compile Local Bot API jika belum ada (via `setup-local-api.sh`)
+- Start di port 8081 dengan auto-restart
+- Log ke `./data/telegram-bot-api.log`
+
+---
+
+### B. Setup di Ubuntu Server (Production)
 
 Jika Local Bot API belum ter-setup di Ubuntu server, ikuti langkah di bawah (hanya perlu sekali):
 
@@ -624,7 +686,7 @@ sudo systemctl restart cloudflared
 |----------|----------|---------|-------------|
 | `BOT_TOKEN` | ✅ | - | Telegram bot token (from @BotFather) |
 | `USE_LOCAL_API` | ❌ | false | Set to `true` untuk use Local Bot API |
-| `LOCAL_API_URL` | ❌ (if `USE_LOCAL_API=true`) | http://localhost:9090 | Local Bot API endpoint (dengan tunnel: https://your-tunnel-url) |
+| `LOCAL_API_URL` | ❌ (if `USE_LOCAL_API=true`) | http://localhost:8081 (Replit) / http://localhost:9090 (Server) | Local Bot API endpoint - Replit use 8081, Ubuntu Server use 9090 + tunnel |
 | `DOWNLOAD_FOLDER` | ❌ | ./downloads | Video storage directory |
 | `MAX_FILE_SIZE` | ❌ | 50000000 | Max file size in bytes (auto 2GB jika USE_LOCAL_API=true) |
 | `TELEGRAM_API_ID` | ❌ (if `USE_LOCAL_API=true`) | - | Telegram API ID (from https://my.telegram.org/apps) |
@@ -635,9 +697,9 @@ sudo systemctl restart cloudflared
 **Security Note**: Never commit credentials to git. Use Replit Secrets atau .env (git-ignored).
 
 **LOCAL_API_URL Examples:**
-- Local development: `http://localhost:9090`
-- With ngrok tunnel: `https://xyz-123-abc.ngrok-free.dev`
-- With Cloudflare tunnel: `https://bot-api.yourdomain.com`
+- **Replit Local Testing**: `http://localhost:8081` (use `start-local-api.sh`)
+- **Ubuntu Server + ngrok tunnel**: `https://xyz-123-abc.ngrok-free.dev` (tunnel to 9090)
+- **Ubuntu Server + Cloudflare tunnel**: `https://bot-api.yourdomain.com` (tunnel to 9090)
 
 ---
 
