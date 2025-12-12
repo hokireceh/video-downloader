@@ -491,37 +491,41 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId, '❌ Kirim URL yang valid!\n\nContoh: https://example.com/video.mp4');
   }
 
-  const oldSearch = getUserSearchEntry(userId);
-  if (oldSearch) {
-    if (!oldSearch.links || !oldSearch.links.includes(text)) {
-      deleteUserSearchEntry(userId);
-      userPagination.delete(userId);
+  // Split multiple URLs by newline/space
+  const urls = text.split(/\n|\r\n/).map(u => u.trim()).filter(u => u && u.match(/^https?:\/\/.+/i));
+  
+  if (urls.length === 0) {
+    return bot.sendMessage(chatId, '❌ Tidak ada URL yang valid!');
+  }
+
+  // Handle multiple URLs
+  if (urls.length > 1) {
+    await bot.sendMessage(chatId, `📋 Menerima ${urls.length} link. Memproses semua...`);
+    
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      setTimeout(() => processVideoDownload(url, chatId, userId), i * 1000);
     }
+    return;
   }
 
-  if (!checkRateLimit(userId)) {
-    return bot.sendMessage(
-      chatId, 
-      '⚠️ Terlalu banyak request! Tunggu sebentar ya.\n\n' +
-      `Max ${CONFIG.MAX_REQUESTS_PER_WINDOW} video per ${CONFIG.RATE_LIMIT_WINDOW / 1000} detik.`
-    );
-  }
-
-  const urlValidation = await isValidVideoUrl(text);
+  // Single URL handling
+  const singleUrl = urls[0];
+  const urlValidation = await isValidVideoUrl(singleUrl);
   if (!urlValidation.valid) {
     return bot.sendMessage(chatId, `❌ ${urlValidation.error}`);
   }
 
-  if (isAlreadyDownloaded(text, userId)) {
+  if (isAlreadyDownloaded(singleUrl, userId)) {
     const keyboard = [
       [
-        { text: '⬇️ Download Ulang', callback_data: `redownload_${Buffer.from(text).toString('base64').substring(0, 50)}` },
+        { text: '⬇️ Download Ulang', callback_data: `redownload_${Buffer.from(singleUrl).toString('base64').substring(0, 50)}` },
         { text: '❌ Skip', callback_data: 'skip_download' }
       ]
     ];
 
     userRedownloadData.set(userId, {
-      url: text,
+      url: singleUrl,
       timestamp: Date.now()
     });
 
@@ -535,7 +539,7 @@ bot.on('message', async (msg) => {
     );
   }
 
-  await processVideoDownload(text, chatId, userId);
+  await processVideoDownload(singleUrl, chatId, userId);
 });
 
 bot.on('callback_query', async (query) => {
