@@ -17,8 +17,17 @@ const {
 } = require('./src/utils/helpers');
 const { extractVideoLinksFromPage, extractVideoFromHTML, parseM3U8Playlist } = require('./src/services/scraper');
 const { downloadVideo, downloadHLSSegments, uploadVideoToTelegram, checkContentType } = require('./src/services/downloader');
+const uploadMetrics = require('./src/utils/metrics');
 
 validateEnvironment();
+
+// Health check: Ensure data directory exists
+const dataDir = CONFIG.DOWNLOAD_FOLDER === './downloads' ? './data' : CONFIG.DOWNLOAD_FOLDER;
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  console.log(`[STARTUP] Created data directory: ${dataDir}`);
+}
+console.log('[STARTUP] ✅ Health check passed');
 
 // Global upload queue to prevent concurrent uploads and rate limiting
 let uploadQueue = Promise.resolve();
@@ -45,6 +54,12 @@ if (useLocalAPI) {
   };
   console.log(`[INFO] Using Local Bot API: ${localAPIUrl}`);
   console.log('[INFO] File size limit: Up to 2GB (Local API)');
+  
+  // Log ngrok URL if available (for monitoring)
+  if (localAPIUrl.includes('ngrok')) {
+    console.log(`[TUNNEL] 🌐 ngrok URL: ${localAPIUrl}`);
+    console.log(`[TUNNEL] ℹ️  This URL may change on reconnect. Monitor ngrok logs.`);
+  }
 } else {
   console.log('[INFO] Using Telegram Cloud Bot API');
   console.log('[INFO] File size limit: Up to 50MB (Cloud API)');
@@ -90,6 +105,11 @@ if (incompleteDownloads.length > 0) {
 startHistoryCleanupInterval();
 startFileCleanupInterval();
 startMemoryCleanupInterval(getUserSearchEntry);
+
+// Log metrics every 1 hour
+setInterval(() => {
+  uploadMetrics.logStats();
+}, 3600000);
 
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;

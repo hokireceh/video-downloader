@@ -433,6 +433,7 @@ async function downloadHLSSegments(segmentUrls, chatId, videoTitle = null) {
 }
 
 async function uploadVideoToTelegram(bot, chatId, filePath, filename, options = {}) {
+  const metrics = require('../utils/metrics');
   const {
     caption = '',
     onRetry = null,
@@ -449,12 +450,14 @@ async function uploadVideoToTelegram(bot, chatId, filePath, filename, options = 
 
   let uploadSuccess = false;
   let uploadAttempts = 0;
+  let retryCount = 0;
   
   while (!uploadSuccess && uploadAttempts < maxRetries) {
     try {
       uploadAttempts++;
       
       if (uploadAttempts > 1) {
+        retryCount++;
         console.log(`[RETRY] Upload attempt ${uploadAttempts}/${maxRetries}`);
         if (onRetry) await onRetry(uploadAttempts, maxRetries);
       }
@@ -477,6 +480,7 @@ async function uploadVideoToTelegram(bot, chatId, filePath, filename, options = 
       
       uploadSuccess = true;
       console.log(`[SUCCESS] Video uploaded: ${filename}`);
+      metrics.recordUploadSuccess(retryCount);
       
     } catch (err) {
       console.error(`[ERROR] Upload attempt ${uploadAttempts}/${maxRetries} failed: ${err.message}`);
@@ -498,6 +502,7 @@ async function uploadVideoToTelegram(bot, chatId, filePath, filename, options = 
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         console.error(`[ERROR] Upload failed - not retryable`);
+        metrics.recordUploadFailure();
         if (onFail) await onFail(err.message);
         return { success: false, error: err.message };
       }
