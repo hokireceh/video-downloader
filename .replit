@@ -28,10 +28,10 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["cmake", "speedtest-cli", "wget", "nano", "tree"]
+packages = ["cmake", "speedtest-cli", "wget", "nano", "tree", "dig", "systemdUkify"]
 
 [userenv]
 
 [userenv.shared]
-LOCAL_API_URL = "https://api.bukitcuan.fun"
+LOCAL_API_URL = "https://unpounded-unwounded-lavon.ngrok-free.dev"
 NTBA_FIX_350 = "1"
