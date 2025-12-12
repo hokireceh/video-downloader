@@ -224,6 +224,13 @@ bot.onText(/^\/chat\s+(.+)/, async (msg, match) => {
 // Handler for batch multiple URL processing - suppresses individual errors, queues uploads
 async function processVideoDownloadForBatch(text, chatId, userId, results, statusMsg, index, total) {
   try {
+    // Check if already downloaded and sent in last 24 hours
+    if (isAlreadyDownloaded(text, userId)) {
+      results.success++;
+      console.log(`[BATCH] Skipped ${index}/${total} - already downloaded: ${text}`);
+      return;
+    }
+
     // Download (no message updates)
     let videoUrl = text;
     let pageTitle = null;
