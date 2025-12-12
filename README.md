@@ -120,23 +120,28 @@ MAX_FILE_SIZE=50000000
 ```bash
 npm start
 ```
+Bot akan langsung jalan dengan Telegram Cloud API.
 
-**Opsi B: Local Bot API (Experimental - Max 2GB)**
+**Opsi B: Local Bot API (Max 2GB)**
+
+Hanya untuk Ubuntu Server dengan Local Bot API + Tunnel sudah setup:
 
 1. Set environment variables di `.env`:
 ```env
 USE_LOCAL_API=true
+LOCAL_API_URL=https://your-tunnel-url
 TELEGRAM_API_ID=your_api_id_from_my_telegram_org
 TELEGRAM_API_HASH=your_api_hash_from_my_telegram_org
 ```
 
-2. Jalankan setup (hanya sekali):
+2. Run bot:
 ```bash
-chmod +x start-all.sh
-./start-all.sh
+npm start
 ```
-
-3. Gunakan workflow "Bot with Local API (Experimental)" dari dropdown Run button
+Bot akan connect ke Local Bot API via tunnel. Pastikan:
+- Local Bot API running di port 9090
+- Tunnel (ngrok/Cloudflare) aktif dan connected
+- `LOCAL_API_URL` sesuai dengan tunnel URL
 
 ---
 
@@ -188,54 +193,61 @@ Jika ingin menyesuaikan folder download atau ukuran file:
 
 Deploy bot dengan Local Bot API untuk support file hingga 2GB. Setup melibatkan:
 - **Local Bot API**: Binary compiled pada Ubuntu, running di port 9090
-- **Apache Reverse Proxy**: Forward requests ke Local Bot API  
+- **Tunnel** (ngrok atau Cloudflare): Expose local API ke internet
 - **Systemd Service**: Auto-restart on crash dan reboot
-- **Custom Domain**: Point ke server dengan SSL
 
 #### Prerequisites
-- Ubuntu 24.04+ server
-- Docker atau native compilation environment untuk Telegram Bot API
-- Apache webserver installed
-- Custom domain dengan DNS management
+- Ubuntu 24.04+ server dengan Local Bot API running di port 9090
+- ngrok atau Cloudflare account untuk tunneling
+- Replit project dengan bot code
 
 #### Architecture Overview
 ```
-Replit Bot ─(HTTPS)─> Custom Domain ─(Apache 8081)─> Localhost:9090 (Local Bot API)
+Replit Bot ─(HTTPS)─> ngrok/Cloudflare Tunnel ─> Localhost:9090 (Local Bot API)
 ```
 
 #### Setup Steps (Command Line)
 
-1. **Compile Telegram Bot API** (if not already done):
+1. **Verify Local Bot API running**:
    ```bash
-   # This requires build tools and boost libraries
-   # Estimated time: 30-60 minutes
+   netstat -tlnp | grep 9090
+   # Should show: telegram-bot-api listening on 0.0.0.0:9090
    ```
 
-2. **Create systemd service** untuk auto-start:
-   - File: `/etc/systemd/system/telegram-bot-api.service`
-   - Ensures Local Bot API starts automatically on server reboot
-   - Auto-restarts if process crashes
+2. **Setup Tunnel** (pilih salah satu):
+   - **ngrok** (lebih cepat untuk file besar): See "Option 1: ngrok" section di atas
+   - **Cloudflare** (lebih stabil, perlu domain): See "Option 2: Cloudflare Tunnel" section di atas
 
-3. **Setup Apache Reverse Proxy**:
-   - Configure VirtualHost untuk custom domain
-   - Proxy requests dari port 8081 → port 9090 (Local Bot API)
+3. **Create systemd service** untuk tunnel auto-start:
+   ```bash
+   # Untuk ngrok: See ngrok section
+   # Untuk Cloudflare: Use 'cloudflared service install'
+   ```
 
 4. **Configure Replit Bot**:
    - Set environment: `USE_LOCAL_API=true`
-   - Set: `LOCAL_API_URL=https://your-custom-domain.com`
-   - Disable SSL validation untuk self-signed certificates
+   - Set: `LOCAL_API_URL=https://your-tunnel-url`
+   - Replit akan auto-disable SSL validation untuk tunnel
 
 #### Benefits
 ✅ Support file hingga 2GB (vs 50MB cloud API)  
 ✅ Persistent local storage  
 ✅ No Telegram cloud upload latency  
 ✅ Auto-restart capabilities  
+✅ Stable tunnel connection (dengan ngrok/Cloudflare)
 
 #### Monitoring
-Check service status:
 ```bash
+# Monitor Local Bot API
 sudo systemctl status telegram-bot-api
-sudo journalctl -u telegram-bot-api -n 50 --no-pager
+sudo tail -50 /var/log/telegram-bot-api/telegram-bot-api.log
+
+# Monitor Tunnel
+# For ngrok:
+sudo tail -50 /var/log/ngrok.log
+
+# For Cloudflare:
+sudo journalctl -u cloudflared -n 50
 ```
 
 ---
@@ -447,17 +459,26 @@ sudo systemctl restart cloudflared
 
 ---
 
-## ⚙️ Environment Variables (Production)
+## ⚙️ Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `BOT_TOKEN` | ✅ | - | Telegram bot token (from @BotFather) |
-| `USE_LOCAL_API` | ❌ | false | Enable Local Bot API mode |
-| `LOCAL_API_URL` | ❌ | http://localhost:8081 | Local Bot API endpoint |
+| `USE_LOCAL_API` | ❌ | false | Set to `true` untuk use Local Bot API |
+| `LOCAL_API_URL` | ❌ (if `USE_LOCAL_API=true`) | http://localhost:9090 | Local Bot API endpoint (dengan tunnel: https://your-tunnel-url) |
 | `DOWNLOAD_FOLDER` | ❌ | ./downloads | Video storage directory |
-| `MAX_FILE_SIZE` | ❌ | 50000000 | Max file size in bytes |
+| `MAX_FILE_SIZE` | ❌ | 50000000 | Max file size in bytes (auto 2GB jika USE_LOCAL_API=true) |
+| `TELEGRAM_API_ID` | ❌ (if `USE_LOCAL_API=true`) | - | Telegram API ID (from https://my.telegram.org/apps) |
+| `TELEGRAM_API_HASH` | ❌ (if `USE_LOCAL_API=true`) | - | Telegram API Hash (from https://my.telegram.org/apps) |
+| `ALLOWED_GROUPS` | ❌ | - | Comma-separated group IDs (optional access control) |
+| `ALLOWED_ADMINS` | ❌ | - | Comma-separated user IDs (optional access control) |
 
-**Security Note**: Never commit credentials to git. Use environment variables or secrets manager.
+**Security Note**: Never commit credentials to git. Use Replit Secrets atau .env (git-ignored).
+
+**LOCAL_API_URL Examples:**
+- Local development: `http://localhost:9090`
+- With ngrok tunnel: `https://xyz-123-abc.ngrok-free.dev`
+- With Cloudflare tunnel: `https://bot-api.yourdomain.com`
 
 ---
 
@@ -512,7 +533,7 @@ Bot akan menampilkan interactive menu dengan daftar video yang dapat dipilih.
 
 ### Configuration Constants
 
-Anda dapat menyesuaikan konstanta di `index.js`:
+Konfigurasi di `src/config/index.js` (auto-adjust berdasarkan environment):
 
 ```javascript
 const CONFIG = {
@@ -521,31 +542,35 @@ const CONFIG = {
   MAX_REQUESTS_PER_WINDOW: 5,         // Max 5 requests per window
 
   // File Management
-  MAX_FILE_SIZE: 50000000,            // 50MB
+  MAX_FILE_SIZE:                       // Auto-adjust:
+    - USE_LOCAL_API=true  → 2GB (2000000000 bytes)
+    - USE_LOCAL_API=false → 50MB (50000000 bytes, default)
   DOWNLOAD_FOLDER: './downloads',
   FILE_CLEANUP_AGE: 3600000,          // 1 jam
   FILE_CLEANUP_INTERVAL: 1800000,     // 30 menit
-  FILE_AUTO_DELETE_DELAY: 5000,       // 5 detik
+  FILE_AUTO_DELETE_DELAY: 30000,      // 30 detik
 
   // Pagination
   VIDEOS_PER_PAGE: 5,                 // 5 video per halaman
   MAX_SEARCH_RESULTS: 20,             // Max 20 video per search
 
-  // Timeouts
+  // Timeouts (auto-adjust)
   HTTP_REQUEST_TIMEOUT: 30000,        // 30 detik
-  DOWNLOAD_TIMEOUT: 60000,            // 60 detik
+  DOWNLOAD_TIMEOUT:
+    - USE_LOCAL_API=true  → 30 menit (1800000 ms)
+    - USE_LOCAL_API=false → 60 detik (60000 ms)
   SCRAPE_TIMEOUT: 30000,              // 30 detik
 
   // Download Progress
   PROGRESS_UPDATE_INTERVAL: 3,        // Update setiap 3 video
-  BATCH_DOWNLOAD_DELAY: 2000,         // 2 detik delay antar video
+  BATCH_DOWNLOAD_DELAY: 0,            // No delay (instant)
 
   // Memory Management
   SEARCH_RESULTS_TTL: 1800000,        // 30 menit
   MEMORY_CLEANUP_INTERVAL: 300000,    // 5 menit
 
   // Security
-  MIN_FILE_SIZE: 50000,               // 50KB (validasi file)
+  MIN_FILE_SIZE: 10000,               // 10KB (validasi file)
 };
 ```
 
@@ -583,23 +608,33 @@ Setiap user dibatasi maksimal 5 request per 60 detik untuk mencegah abuse.
 
 ### Input Validation
 - URL validation dengan async DNS resolution
-- File size validation (min 50KB, max 50MB)
+- File size validation (min 10KB, max 50MB/2GB)
 - Content-type validation (reject HTML pages)
 - Filename sanitization (remove special characters)
 
 ## 📁 Project Structure
 
 ```
-video-downloader/
+telegram-video-downloader-bot/
+├── src/
+│   ├── config/
+│   │   └── index.js              # Configuration & environment validation
+│   ├── services/
+│   │   ├── downloader.js         # Video download & upload logic
+│   │   ├── history.js            # Download history management
+│   │   └── scraper.js            # HTML parsing & video extraction
+│   └── utils/
+│       ├── helpers.js            # Utility functions (rate limiting, cleanup)
+│       └── security.js           # URL validation & SSRF protection
 ├── data/
-│   └── data.json           # Persistent history storage
-├── downloads/              # Temporary video storage (auto-cleanup)
-├── index.js               # Main bot application
-├── package.json           # Dependencies & scripts
-├── .env                   # Environment configuration (git-ignored)
-├── .env.example          # Environment template
-├── README.md             # Project documentation
-└── .gitignore            # Git ignore rules
+│   └── data.json                 # Persistent history storage (auto-created)
+├── downloads/                    # Temporary video storage (auto-cleanup)
+├── index.js                      # Main bot application
+├── package.json                  # Dependencies & scripts
+├── .env                          # Environment configuration (git-ignored)
+├── .env.example                  # Environment template
+├── README.md                     # Project documentation
+└── .gitignore                    # Git ignore rules
 ```
 
 ## 🔧 Development
