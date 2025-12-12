@@ -196,6 +196,44 @@ function deleteUserSearchEntry(userId) {
   }
 }
 
+function getIncompleteDownloads() {
+  try {
+    const history = loadHistory();
+    const now = Date.now();
+    
+    return history.downloads.filter(entry => {
+      const isRecent = (now - entry.timestamp) < CONFIG.HISTORY_RETENTION_MS;
+      const isIncomplete = entry.status === 'pending';
+      return isIncomplete && isRecent;
+    });
+  } catch (error) {
+    console.error(`[ERROR] Failed to get incomplete downloads: ${error.message}`);
+    return [];
+  }
+}
+
+function updateDownloadStatus(filename, newStatus) {
+  try {
+    const history = loadHistory();
+    const entry = history.downloads.find(d => d.filename === filename);
+    
+    if (entry) {
+      entry.status = newStatus;
+      if (newStatus === 'sent') {
+        entry.sentAt = Date.now();
+      }
+      saveHistory(history);
+      console.log(`[HISTORY] Updated status for ${filename}: ${newStatus}`);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error(`[ERROR] Failed to update download status: ${error.message}`);
+    return false;
+  }
+}
+
 function startHistoryCleanupInterval() {
   setInterval(cleanupOldHistory, 60 * 60 * 1000);
 }
@@ -206,6 +244,8 @@ module.exports = {
   cleanupOldHistory,
   isAlreadyDownloaded,
   addToHistory,
+  getIncompleteDownloads,
+  updateDownloadStatus,
   getUserSearchEntry,
   setUserSearchEntry,
   deleteUserSearchEntry,

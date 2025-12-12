@@ -7,6 +7,7 @@ const { CONFIG, useLocalAPI, localAPIUrl, validateEnvironment, isAuthorized } = 
 const { isValidVideoUrl, sanitizeFilename } = require('./src/utils/security');
 const { 
   loadHistory, cleanupOldHistory, isAlreadyDownloaded, addToHistory,
+  getIncompleteDownloads, updateDownloadStatus,
   getUserSearchEntry, setUserSearchEntry, deleteUserSearchEntry, startHistoryCleanupInterval 
 } = require('./src/services/history');
 const {
@@ -46,6 +47,38 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, botOptions);
 
 console.log('[STARTUP] Running initial history cleanup...');
 cleanupOldHistory();
+
+// Re-upload incomplete files from previous session
+console.log('[STARTUP] Checking for incomplete downloads to retry...');
+const incompleteDownloads = getIncompleteDownloads();
+if (incompleteDownloads.length > 0) {
+  console.log(`[STARTUP] Found ${incompleteDownloads.length} incomplete downloads, will retry upload...`);
+  
+  // Schedule retry for a few seconds after bot starts
+  setTimeout(async () => {
+    for (const download of incompleteDownloads) {
+      try {
+        const filePath = path.join(CONFIG.DOWNLOAD_FOLDER, download.filename);
+        if (fs.existsSync(filePath)) {
+          console.log(`[RETRY] Attempting to upload incomplete file: ${download.filename}`);
+          const result = await uploadVideoToTelegram(bot, download.userId, filePath, download.filename, {
+            onFail: async (error) => {
+              console.error(`[RETRY] Failed to upload ${download.filename}: ${error}`);
+            }
+          });
+          
+          if (result.success) {
+            updateDownloadStatus(download.filename, 'sent');
+          }
+        }
+      } catch (error) {
+        console.error(`[RETRY] Error processing incomplete download: ${error.message}`);
+      }
+    }
+  }, 2000);
+} else {
+  console.log('[STARTUP] No incomplete downloads found');
+}
 
 startHistoryCleanupInterval();
 startFileCleanupInterval();
