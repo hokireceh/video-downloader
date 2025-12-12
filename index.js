@@ -20,6 +20,13 @@ const { downloadVideo, downloadHLSSegments, uploadVideoToTelegram, checkContentT
 
 validateEnvironment();
 
+// Global upload queue to prevent concurrent uploads and rate limiting
+let uploadQueue = Promise.resolve();
+function queueUpload(uploadFn) {
+  uploadQueue = uploadQueue.then(uploadFn).catch(() => {});
+  return uploadQueue;
+}
+
 const botOptions = { 
   polling: {
     interval: 300,
@@ -213,6 +220,63 @@ bot.onText(/^\/chat\s+(.+)/, async (msg, match) => {
     await bot.sendMessage(chatId, `❌ Gagal kirim ke group!\n\nError: ${error.message}`);
   }
 });
+
+// Handler for batch multiple URL processing - suppresses individual errors, queues uploads
+async function processVideoDownloadForBatch(text, chatId, userId, results, statusMsg, index, total) {
+  try {
+    // Download (no message updates)
+    let videoUrl = text;
+    const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp'];
+    const urlPath = new URL(text).pathname.toLowerCase().replace(/\/$/, '');
+    const isDirectLink = videoExtensions.some(ext => urlPath.endsWith(ext));
+
+    if (!isDirectLink) {
+      const extractResult = await extractVideoFromHTML(text);
+      if (!extractResult.success) {
+        results.failed++;
+        console.log(`[BATCH] Failed to extract from ${text}: ${extractResult.error}`);
+        return;
+      }
+      videoUrl = extractResult.videoUrl || text;
+    }
+
+    const downloadResult = await downloadVideo(videoUrl, chatId, null);
+    if (!downloadResult.success) {
+      results.failed++;
+      console.log(`[BATCH] Failed download ${index}/${total}: ${downloadResult.error}`);
+      return;
+    }
+
+    addToHistory(text, userId, downloadResult.filename, 'pending');
+    
+    // Queue upload to prevent concurrent uploads
+    const uploadResult = await queueUpload(async () => {
+      return await uploadVideoToTelegram(bot, chatId, downloadResult.filePath, downloadResult.filename, {
+        caption: `${downloadResult.filename.replace(/\.[^/.]+$/, '')}`,
+        onRetry: async () => {},
+        onFail: async () => { results.failed++; }
+      });
+    });
+
+    if (uploadResult.success) {
+      results.success++;
+      addToHistory(text, userId, downloadResult.filename, 'sent');
+    } else {
+      results.failed++;
+    }
+
+    // Update status message every 2 videos
+    if (index % 2 === 0 || index === total) {
+      await bot.editMessageText(
+        `📊 Progress: ${index}/${total}\n✅ Success: ${results.success}\n❌ Failed: ${results.failed}`,
+        { chat_id: chatId, message_id: statusMsg.message_id }
+      ).catch(() => {});
+    }
+  } catch (error) {
+    results.failed++;
+    console.error(`[BATCH] Error processing ${index}/${total}: ${error.message}`);
+  }
+}
 
 async function processVideoDownload(text, chatId, userId, existingMessageId = null, skipDuplicateCheck = false) {
   const startTime = Date.now();
@@ -422,33 +486,37 @@ async function processVideoDownload(text, chatId, userId, existingMessageId = nu
       `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
 
     addToHistory(text, userId, result.filename, 'pending');
-    const uploadResult = await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, {
-      caption: caption,
-      onRetry: async (attempt, max) => {
-        await bot.editMessageText(
-          `⏫ Retry upload (${attempt}/${max})...`,
-          { chat_id: chatId, message_id: loadingMsg.message_id }
-        ).catch(() => {});
-      },
-      onFail: async (error) => {
-        let errorDetails = error;
-        let helpText = '';
-        
-        if (error.includes('file is too big')) {
-          helpText = `\n\n💡 File terlalu besar untuk Telegram ${useLocalAPI ? 'Local API' : 'Cloud API'}.\n⚠️ Max: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`;
-        } else if (error.includes('ETELEGRAM')) {
-          errorDetails = error.replace('ETELEGRAM: ', '');
-          helpText = '\n\n💡 Error dari Telegram server. Coba lagi nanti.';
-        } else if (error.includes('ECONNRESET') || error.includes('ETIMEDOUT')) {
-          helpText = '\n\n💡 Koneksi terputus. Periksa koneksi internet Anda.';
+    
+    // Queue upload to prevent concurrent uploads and rate limiting
+    const uploadResult = await queueUpload(async () => {
+      return await uploadVideoToTelegram(bot, chatId, result.filePath, result.filename, {
+        caption: caption,
+        onRetry: async (attempt, max) => {
+          await bot.editMessageText(
+            `⏫ Retry upload (${attempt}/${max})...`,
+            { chat_id: chatId, message_id: loadingMsg.message_id }
+          ).catch(() => {});
+        },
+        onFail: async (error) => {
+          let errorDetails = error;
+          let helpText = '';
+          
+          if (error.includes('file is too big')) {
+            helpText = `\n\n💡 File terlalu besar untuk Telegram ${useLocalAPI ? 'Local API' : 'Cloud API'}.\n⚠️ Max: ${(CONFIG.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`;
+          } else if (error.includes('ETELEGRAM')) {
+            errorDetails = error.replace('ETELEGRAM: ', '');
+            helpText = '\n\n💡 Error dari Telegram server. Coba lagi nanti.';
+          } else if (error.includes('ECONNRESET') || error.includes('ETIMEDOUT')) {
+            helpText = '\n\n💡 Koneksi terputus. Periksa koneksi internet Anda.';
+          }
+          
+          await bot.editMessageText(
+            `❌ Gagal upload ke Telegram!\n\n` +
+            `Error: ${errorDetails}${helpText}`,
+            { chat_id: chatId, message_id: loadingMsg.message_id }
+          );
         }
-        
-        await bot.editMessageText(
-          `❌ Gagal upload ke Telegram!\n\n` +
-          `Error: ${errorDetails}${helpText}`,
-          { chat_id: chatId, message_id: loadingMsg.message_id }
-        );
-      }
+      });
     });
 
     if (!uploadResult.success) {
@@ -498,15 +566,28 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId, '❌ Tidak ada URL yang valid!');
   }
 
-  // Handle multiple URLs
+  // Handle multiple URLs with sequential uploads
   if (urls.length > 1) {
-    await bot.sendMessage(chatId, `📋 Menerima ${urls.length} link.\n⏳ Memproses: didownload sekaligus, di-upload bergiliran...\n\n⏱️ Estimasi: ${urls.length * 10}-${urls.length * 20} menit`);
+    const statusMsg = await bot.sendMessage(
+      chatId, 
+      `📋 Menerima ${urls.length} link.\n⏳ Processing semuanya...\n\n` +
+      `⏱️ Estimasi: ${urls.length * 15}-${urls.length * 30} menit\n\n` +
+      `📊 Status: Queue dijalankan...`
+    );
+
+    const results = { success: 0, failed: 0, errors: [] };
     
-    // Process all downloads in parallel but with staggered start
     for (let i = 0; i < urls.length; i++) {
       const url = urls[i];
-      // Stagger downloads with longer delay to avoid rate limit during processing
-      setTimeout(() => processVideoDownload(url, chatId, userId), i * 5000);
+      
+      // Process with slight delay to allow some parallelism in downloads
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      processVideoDownloadForBatch(url, chatId, userId, results, statusMsg, i + 1, urls.length)
+        .catch(err => {
+          results.failed++;
+          results.errors.push(`${url.substring(0, 50)}...: ${err.message}`);
+        });
     }
     return;
   }
