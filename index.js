@@ -226,6 +226,7 @@ async function processVideoDownloadForBatch(text, chatId, userId, results, statu
   try {
     // Download (no message updates)
     let videoUrl = text;
+    let pageTitle = null;
     const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp'];
     const urlPath = new URL(text).pathname.toLowerCase().replace(/\/$/, '');
     const isDirectLink = videoExtensions.some(ext => urlPath.endsWith(ext));
@@ -238,9 +239,10 @@ async function processVideoDownloadForBatch(text, chatId, userId, results, statu
         return;
       }
       videoUrl = extractResult.videoUrl || text;
+      pageTitle = extractResult.pageTitle || null;
     }
 
-    const downloadResult = await downloadVideo(videoUrl, chatId, null);
+    const downloadResult = await downloadVideo(videoUrl, chatId, pageTitle);
     if (!downloadResult.success) {
       results.failed++;
       console.log(`[BATCH] Failed download ${index}/${total}: ${downloadResult.error}`);
@@ -249,10 +251,19 @@ async function processVideoDownloadForBatch(text, chatId, userId, results, statu
 
     addToHistory(text, userId, downloadResult.filename, 'pending');
     
+    // Format caption same as single URL
+    const filenameCleaned = downloadResult.filename.replace(/\.[^/.]+$/, '');
+    const fileSizeMB = (downloadResult.fileSize / 1024 / 1024).toFixed(2);
+    const caption = 
+      `▬▬▬▬▬▬▬▬▬▬▬▬▬\n` +
+      `${filenameCleaned} \n\n` +
+      `          ❖ ${fileSizeMB}MB ❖\n` +
+      `▬▬▬▬▬▬▬▬▬▬▬▬▬`;
+    
     // Queue upload to prevent concurrent uploads
     const uploadResult = await queueUpload(async () => {
       return await uploadVideoToTelegram(bot, chatId, downloadResult.filePath, downloadResult.filename, {
-        caption: `${downloadResult.filename.replace(/\.[^/.]+$/, '')}`,
+        caption: caption,
         onRetry: async () => {},
         onFail: async () => { results.failed++; }
       });
