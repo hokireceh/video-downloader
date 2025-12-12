@@ -500,11 +500,13 @@ bot.on('message', async (msg) => {
 
   // Handle multiple URLs
   if (urls.length > 1) {
-    await bot.sendMessage(chatId, `📋 Menerima ${urls.length} link. Memproses semua...`);
+    await bot.sendMessage(chatId, `📋 Menerima ${urls.length} link.\n⏳ Memproses: didownload sekaligus, di-upload bergiliran...\n\n⏱️ Estimasi: ${urls.length * 10}-${urls.length * 20} menit`);
     
+    // Process all downloads in parallel but with staggered start
     for (let i = 0; i < urls.length; i++) {
       const url = urls[i];
-      setTimeout(() => processVideoDownload(url, chatId, userId), i * 1000);
+      // Stagger downloads with longer delay to avoid rate limit during processing
+      setTimeout(() => processVideoDownload(url, chatId, userId), i * 5000);
     }
     return;
   }
