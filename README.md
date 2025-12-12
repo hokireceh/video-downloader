@@ -191,22 +191,181 @@ Jika ingin menyesuaikan folder download atau ukuran file:
 
 ### Option B: Ubuntu Server + Local Bot API (Production - 2GB File Support)
 
-Deploy bot dengan Local Bot API untuk support file hingga 2GB. Setup melibatkan:
-- **Local Bot API**: Binary compiled pada Ubuntu, running di port 9090
-- **Tunnel** (ngrok atau Cloudflare): Expose local API ke internet
-- **Systemd Service**: Auto-restart on crash dan reboot
-
-#### Prerequisites
-- Ubuntu 24.04+ server dengan Local Bot API running di port 9090
-- ngrok atau Cloudflare account untuk tunneling
-- Replit project dengan bot code
+Deploy bot dengan Local Bot API untuk support file hingga 2GB. Setup melibatkan 3 komponen:
+1. **Local Bot API**: Binary Telegram Bot API running di port 9090
+2. **Tunnel** (ngrok atau Cloudflare): Expose local API ke internet
+3. **Replit Bot**: Connect ke Local API via tunnel
 
 #### Architecture Overview
 ```
 Replit Bot ─(HTTPS)─> ngrok/Cloudflare Tunnel ─> Localhost:9090 (Local Bot API)
 ```
 
-#### Setup Steps (Command Line)
+---
+
+## 🔧 Setup Local Telegram Bot API (Ubuntu Server)
+
+Jika Local Bot API belum ter-setup di Ubuntu server, ikuti langkah di bawah (hanya perlu sekali):
+
+### Prerequisites untuk Compile
+- Ubuntu 24.04+ LTS
+- Build tools: `build-essential`, `cmake`
+- Dependencies: `libssl-dev`, `zlib1g-dev`, `git`
+
+### Step 1: Install Dependencies
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake git zlib1g-dev libssl-dev libreadline-dev
+```
+
+### Step 2: Download & Compile Telegram Bot API
+
+Ada 2 opsi:
+
+**Opsi A: Clone dari GitHub dan Compile (30-60 menit, disk space ~2GB)**
+```bash
+# Clone repository
+git clone --recursive https://github.com/tdlib/telegram-bot-api.git
+cd telegram-bot-api
+
+# Create build directory
+mkdir build
+cd build
+
+# Configure & compile (takes time)
+cmake -DCMAKE_BUILD_TYPE=Release ..
+cmake --build . --target install
+
+# Binary akan tersimpan di: /usr/local/bin/telegram-bot-api
+```
+
+**Opsi B: Download Pre-compiled Binary (Lebih cepat)**
+
+Cek di [TelegramBot/telegram-bot-api releases](https://github.com/tdlib/telegram-bot-api/releases) untuk latest binary, atau:
+```bash
+cd /tmp
+wget https://github.com/tdlib/telegram-bot-api/releases/download/v7.x.x/telegram-bot-api-linux
+chmod +x telegram-bot-api-linux
+sudo mv telegram-bot-api-linux /usr/local/bin/telegram-bot-api
+```
+
+### Step 3: Verify Installation
+
+```bash
+telegram-bot-api --help
+# Harus show usage information
+```
+
+### Step 4: Create Data Directory
+
+```bash
+sudo mkdir -p /var/lib/telegram-bot-api
+sudo chown -R $USER:$USER /var/lib/telegram-bot-api
+```
+
+### Step 5: Create Systemd Service
+
+```bash
+sudo tee /etc/systemd/system/telegram-bot-api.service > /dev/null << 'EOF'
+[Unit]
+Description=Telegram Bot API Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/telegram-bot-api
+ExecStart=/usr/local/bin/telegram-bot-api \
+  --local \
+  --api-id=YOUR_API_ID \
+  --api-hash=YOUR_API_HASH \
+  --http-port=9090 \
+  --http-ip-address=0.0.0.0 \
+  --temp-dir=/tmp/telegram-bot-api \
+  --verbosity=2 \
+  --dir=/var/lib/telegram-bot-api
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+**Important**: Ganti `YOUR_API_ID` dan `YOUR_API_HASH` dengan nilai dari [my.telegram.org/apps](https://my.telegram.org/apps)
+
+### Step 6: Enable & Start Service
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable telegram-bot-api
+sudo systemctl start telegram-bot-api
+
+# Verify running
+sudo systemctl status telegram-bot-api
+
+# Check logs
+sudo journalctl -u telegram-bot-api -n 20 --no-pager
+```
+
+### Step 7: Test Local Bot API
+
+```bash
+# Should return bot info
+curl http://localhost:9090/getMe
+
+# Expected response:
+# {"ok":false,"error_code":404,"description":"Not Found"}
+# (404 OK karena belum ada bot token, tapi service jalan)
+```
+
+**Troubleshooting:**
+```bash
+# Connection refused? Check if service running:
+sudo systemctl status telegram-bot-api
+
+# Port 9090 tidak listen? Check error:
+sudo journalctl -u telegram-bot-api -n 50
+
+# Kill port jika ada yang occupy:
+sudo lsof -ti :9090 | xargs kill -9
+```
+
+---
+
+### Step 8: Setup Tunnel untuk Expose ke Internet
+
+Pilih salah satu:
+- **ngrok**: See "Option 1: ngrok" section di bawah
+- **Cloudflare**: See "Option 2: Cloudflare Tunnel" section di bawah
+
+---
+
+### Connect Replit Bot ke Local API
+
+Setelah Local Bot API + Tunnel setup:
+
+1. **Set Replit Secrets:**
+   ```
+   USE_LOCAL_API=true
+   LOCAL_API_URL=https://your-tunnel-url
+   TELEGRAM_API_ID=YOUR_API_ID
+   TELEGRAM_API_HASH=YOUR_API_HASH
+   ```
+
+2. **Run Bot:**
+   ```bash
+   npm start
+   ```
+
+3. **Verify Connection:**
+   - Bot logs should show: `[INFO] Using Local Bot API: https://your-tunnel-url`
+   - File uploads should work hingga 2GB
+
+---
+
+#### Setup Steps Summary (Jika Local Bot API Sudah Ada)
 
 1. **Verify Local Bot API running**:
    ```bash
