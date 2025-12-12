@@ -240,6 +240,213 @@ sudo journalctl -u telegram-bot-api -n 50 --no-pager
 
 ---
 
+## 🔗 Tunneling Options (Expose Local Bot API to Internet)
+
+Jika menggunakan Local Bot API di server, Anda perlu tunnel untuk expose port 9090 ke internet agar Replit dapat mengakses. Ada 2 opsi:
+
+### Option 1: ngrok (Recommended - Faster for Large Files)
+
+**Kelebihan:**
+- ✅ Lebih stabil untuk file besar (100MB+)
+- ✅ Disconnect otomatis reconnect
+- ✅ Ngrok tunnel URL bersifat temporary (rotate setiap reconnect)
+
+**Kekurangan:**
+- ❌ Free tier ada rate limit
+- ❌ Tunnel URL berubah setelah reconnect (perlu automate)
+
+**Setup:**
+
+1. **Install ngrok** (jika belum):
+   ```bash
+   # Download dari https://ngrok.com/download
+   # Atau dengan apt:
+   sudo apt install ngrok
+   ```
+
+2. **Authenticate ngrok** (diperlukan account):
+   ```bash
+   ngrok config add-authtoken YOUR_NGROK_AUTH_TOKEN
+   ```
+   (Dapatkan token gratis dari https://dashboard.ngrok.com/auth/your-authtoken)
+
+3. **Setup systemd service** untuk auto-start:
+   ```bash
+   sudo tee /etc/systemd/system/ngrok.service > /dev/null << 'EOF'
+   [Unit]
+   Description=ngrok tunnel untuk Local Bot API
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=root
+   ExecStart=/usr/local/bin/ngrok http localhost:9090 --log=stdout
+   Restart=on-failure
+   RestartSec=10s
+   StandardOutput=append:/var/log/ngrok.log
+   StandardError=append:/var/log/ngrok.log
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+
+   sudo systemctl daemon-reload
+   sudo systemctl enable ngrok
+   sudo systemctl start ngrok
+   ```
+
+4. **Get tunnel URL**:
+   ```bash
+   # Check URL dari logs
+   sudo tail -20 /var/log/ngrok.log | grep "url="
+   
+   # Atau akses web interface
+   curl http://127.0.0.1:4040/api/tunnels | jq '.tunnels[0].public_url'
+   ```
+
+5. **Configure Bot Environment**:
+   ```bash
+   # Set di Replit Secrets:
+   USE_LOCAL_API=true
+   LOCAL_API_URL=https://YOUR_NGROK_URL
+   # Contoh: https://xyz-123-abc.ngrok-free.dev
+   ```
+
+6. **Automate URL Updates** (Optional):
+   ```bash
+   # Buat script untuk fetch URL setiap hari:
+   # crontab -e
+   0 0 * * * curl http://127.0.0.1:4040/api/tunnels | jq '.tunnels[0].public_url' > /tmp/ngrok_url.txt
+   ```
+
+---
+
+### Option 2: Cloudflare Tunnel (Free - Better for Privacy)
+
+**Kelebihan:**
+- ✅ Gratis selamanya, tanpa rate limit
+- ✅ Fixed URL (tidak berubah)
+- ✅ Better privacy (no bandwidth exposure)
+- ✅ DDoS protection included
+
+**Kekurangan:**
+- ❌ Lebih lambat untuk large file uploads
+- ❌ Perlu Cloudflare account + domain
+
+**Setup:**
+
+1. **Requirements:**
+   - Domain yang sudah point ke Cloudflare DNS
+   - Cloudflare account (gratis)
+
+2. **Install cloudflared**:
+   ```bash
+   # Debian/Ubuntu
+   curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+   sudo dpkg -i cloudflared.deb
+   
+   # Atau dengan apt:
+   sudo apt install cloudflared
+   ```
+
+3. **Authenticate dengan Cloudflare**:
+   ```bash
+   cloudflared tunnel login
+   # Akan membuka browser untuk authorize
+   ```
+
+4. **Create named tunnel**:
+   ```bash
+   cloudflared tunnel create telegram-bot-api
+   # Akan generate tunnel ID
+   ```
+
+5. **Create config file** (`~/.cloudflared/config.yml`):
+   ```yaml
+   tunnel: telegram-bot-api
+   credentials-file: ~/.cloudflared/YOUR_TUNNEL_ID.json
+   
+   ingress:
+     - hostname: bot-api.yourdomain.com
+       service: http://localhost:9090
+     - service: http_status:404
+   ```
+   Ganti `yourdomain.com` dengan domain Anda.
+
+6. **Setup DNS di Cloudflare Dashboard**:
+   - Buat CNAME record: `bot-api.yourdomain.com` → `YOUR_TUNNEL_ID.cfargotunnel.com`
+   - Atau pakai Cloudflare CLI:
+   ```bash
+   cloudflared tunnel route dns telegram-bot-api bot-api.yourdomain.com
+   ```
+
+7. **Setup systemd service** untuk auto-start:
+   ```bash
+   sudo cloudflared service install
+   sudo systemctl start cloudflared
+   sudo systemctl enable cloudflared
+   ```
+
+8. **Configure Bot Environment**:
+   ```bash
+   # Set di Replit Secrets:
+   USE_LOCAL_API=true
+   LOCAL_API_URL=https://bot-api.yourdomain.com
+   ```
+
+9. **Monitoring**:
+   ```bash
+   cloudflared tunnel info telegram-bot-api
+   # Atau lihat di Cloudflare Dashboard → Tunnels
+   ```
+
+---
+
+### Comparison Table
+
+| Feature | ngrok | Cloudflare |
+|---------|-------|-----------|
+| **Setup Complexity** | Easy | Medium |
+| **Cost** | Gratis (limited) | Gratis (unlimited) |
+| **URL Stability** | Changes (free tier) | Fixed ✅ |
+| **Large Files** | Better ✅ | Slower |
+| **Privacy** | Bandwidth exposed | Hidden ✅ |
+| **Downtime** | ~8-9 min intervals | Rare |
+| **Domain Required** | No | Yes |
+
+---
+
+### Troubleshooting
+
+**ngrok tunnel offline?**
+```bash
+# Restart service
+sudo systemctl restart ngrok
+
+# Check status
+sudo systemctl status ngrok
+sudo tail -50 /var/log/ngrok.log
+```
+
+**Cloudflare tunnel not connecting?**
+```bash
+# Check connection
+cloudflared tunnel info telegram-bot-api
+
+# View logs
+sudo journalctl -u cloudflared -n 50
+
+# Restart service
+sudo systemctl restart cloudflared
+```
+
+**Bot says "Local API offline"?**
+1. Verify Local Bot API running: `netstat -tlnp | grep 9090`
+2. Test tunnel: `curl https://YOUR_TUNNEL_URL/getMe` (should return bot info)
+3. Check `LOCAL_API_URL` in Replit Secrets matches tunnel URL
+
+---
+
 ## ⚙️ Environment Variables (Production)
 
 | Variable | Required | Default | Description |
